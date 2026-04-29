@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+
+// Import the CLI logic from dist/cli.js
+import "../dist/cli.js";

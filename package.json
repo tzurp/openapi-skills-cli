@@ -1,0 +1,56 @@
+{
+  "name": "openapi-skills",
+  "version": "0.3.0-beta.0",
+  "description": "CLI toolkit for turning OpenAPI specs into agent-ready skills, typed client schemas, request validators, endpoint tests, and exploration tools.",
+  "bin": {
+    "openapi-skills": "./bin/openapi-skills"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tzurp/openapi-skills.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "vitest --reporter verbose --sequence.concurrent false",
+    "build": "tsc",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "openapi",
+    "swagger",
+    "cli",
+    "api",
+    "agent",
+    "skills"
+  ],
+  "author": "Tzur Paldi",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@types/find-root": "^1.1.4",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^25.6.0",
+    "@vitest/coverage-v8": "^4.1.1",
+    "@vitest/ui": "^4.1.1",
+    "execa": "^9.6.1",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "@apidevtools/json-schema-ref-parser": "^14.0.1",
+    "@apidevtools/swagger-parser": "^12.1.0",
+    "ajv": "^8.18.0",
+    "commander": "^14.0.3",
+    "find-root": "^1.1.0",
+    "fs-extra": "^11.3.4"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "skill-templates",
+    "README.md"
+  ]
+}
