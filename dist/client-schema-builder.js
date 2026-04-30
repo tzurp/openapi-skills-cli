@@ -1,6 +1,7 @@
 import fs from "fs-extra";
 import { getEndpointsPath } from "./helper/paths.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
+import { resolveParameterSchema } from "./helper/parameter-schema.js";
 function toPascalCase(str) {
     return str
         .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
@@ -127,7 +128,7 @@ export async function buildClientCodeSchema(apiName, operationId, sanitizedOpera
             groupedParams[p.in][p.name] = {
                 description: p.description,
                 required: p.required,
-                schema: p.schema
+                schema: resolveParameterSchema(p)
             };
         }
     }

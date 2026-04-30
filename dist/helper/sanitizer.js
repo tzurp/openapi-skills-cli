@@ -1,8 +1,8 @@
 export function sanitizeOperationPath(name) {
     const normalized = name
         .normalize("NFKD")
-        .replace(/\\/g, "/");
-    const segments = normalized.split("/");
+        .replace(/[\\/]/g, "_");
+    const segments = normalized.split("_");
     const sanitizedSegments = segments.map(seg => {
         if (seg === "") {
             return "_";
@@ -12,6 +12,6 @@ export function sanitizeOperationPath(name) {
         seg = seg.replace(/^_+|_+$/g, "");
         return seg || "_";
     });
-    return sanitizedSegments.join("/");
+    return sanitizedSegments.join("_");
 }
 //# sourceMappingURL=sanitizer.js.map

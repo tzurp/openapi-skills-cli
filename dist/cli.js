@@ -606,13 +606,19 @@ genClientSchemaCmd.agentMeta = {
 const describeCmd = program
     .command("describe <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
-    .description("Return the full schema for a specific endpoint as JSON.")
+    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     try {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
-        logger.result(schema);
+        logger.result({
+            kind: "describe-result",
+            apiName,
+            operationId,
+            warnings: ["describe → fallback for generate-client-schema. Use openapi-skills generate-client-schema first for client code generation. Use describe only when you need the full raw schema detail."],
+            schema,
+        });
         return;
     }
     catch (error) {
@@ -628,7 +634,7 @@ describeCmd.agentMeta = {
     category: "Navigation",
     usage: "openapi-skills describe <operationId> --api <apiName>",
     description: [
-        "Print the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes.",
+        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes.",
         "",
         "**Agents MUST use `generate-client-schema` for client code generation. Use `describe` only as a fallback when you need full raw schema detail beyond what `generate-client-schema` provides, or when `generate-client-schema` is insufficient.**"
     ].join("\n"),
@@ -642,7 +648,7 @@ describeCmd.agentMeta = {
     ],
     returns: {
         type: "json",
-        description: "Raw OpenAPI schema object for the specified operation."
+        description: "Structured JSON with a fallback warning and the raw OpenAPI schema nested under `schema`."
     },
     sideEffects: {
         writesFiles: false,
@@ -747,8 +753,7 @@ const requestCmd = program
     if (operationIds.length > 1) {
         try {
             const { summaryText, payload } = await prepareMultiOperationRequests(apiName, operationIds, options.force === true);
-            process.stdout.write(`${summaryText}\n`);
-            logger.result(payload);
+            logger.result(`${summaryText}\n`);
             process.exitCode = 0;
         }
         catch (error) {
@@ -800,7 +805,9 @@ const requestCmd = program
             }
         }
         catch (err) {
-            logger.error("Invalid --header JSON. Example: --header '{\"X-Api-Key\":\"abc\"}'");
+            const message = "Invalid --header JSON. Example: --header '{\"X-Api-Key\":\"abc\"}'";
+            logger.result(message);
+            logger.error(message);
             process.exitCode = 2;
             return;
         }
@@ -848,8 +855,6 @@ const requestCmd = program
                 apiName,
                 operationId,
                 warnings: warnings ?? [],
-                request,
-                response,
                 requestResponseDir: metadata.requestResponseDir,
                 files: metadata.files,
                 fileCount: metadata.fileCount,

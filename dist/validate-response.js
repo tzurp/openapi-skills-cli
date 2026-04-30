@@ -7,6 +7,7 @@ import { buildClientCodeSchema } from "./client-schema-builder.js";
 import { loadJsonObject, updateJsonFile } from "./helper/json-updater.js";
 import { loadConfig } from "./index.js";
 import getSanitizedOperationId from "./helper/endpoint-utils.js";
+import { getParameterDefaultValue } from "./helper/parameter-schema.js";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -192,7 +193,7 @@ function hasGeneratedRequestShape(value) {
         return false;
     }
     const requestJson = value;
-    return Object.prototype.hasOwnProperty.call(requestJson, "parameters") && Object.prototype.hasOwnProperty.call(requestJson, "requestBody");
+    return Object.prototype.hasOwnProperty.call(requestJson, "parameters") && Array.isArray(requestJson.parameters);
 }
 function buildRequestContext(apiName, operationSchema, requestJson, config, responseJsonPath, cliHeaders, warnings = []) {
     const headers = { "Content-Type": "application/json" };
@@ -231,18 +232,7 @@ function buildDeterministicRequestTemplate(fullSchema) {
     const parametersArr = [];
     if (Array.isArray(fullSchema.parameters)) {
         for (const param of fullSchema.parameters) {
-            const type = param.schema?.type;
-            let value = null;
-            if (type === "string")
-                value = "";
-            else if (type === "number" || type === "integer")
-                value = 0;
-            else if (type === "boolean")
-                value = false;
-            else if (type === "array")
-                value = [];
-            else if (type === "object")
-                value = {};
+            const value = getParameterDefaultValue(param);
             parametersArr.push({ name: param.name, in: param.in, value });
         }
     }
@@ -250,10 +240,13 @@ function buildDeterministicRequestTemplate(fullSchema) {
     if (fullSchema?.requestBody || fullSchema?.parameters) {
         requestBodyObj = getDeterministicRequestBody(fullSchema);
     }
-    return {
-        parameters: parametersArr.length ? parametersArr : null,
-        requestBody: requestBodyObj
+    const requestTemplate = {
+        parameters: parametersArr,
     };
+    if (requestBodyObj !== null) {
+        requestTemplate.requestBody = requestBodyObj;
+    }
+    return requestTemplate;
 }
 function substitutePathParams(path, params) {
     return path.replace(/\{([^}]+)\}/g, (_, key) => {

@@ -118,11 +118,11 @@ Here’s an OpenAPI file. Parse it and get it ready for exploration:
 ## 2. Exploring Endpoints
 
 ```
-Show me the endpoints in this API.
+Show me the first 10 endpoints in this API.
 ```
 
 ```
-List the endpoints under path: /users.
+List the all the GET endpoints under path: /users.
 ```
 
 ```
@@ -162,7 +162,7 @@ The agent will follow the client‑code scenario automatically.
 ## 5. Describing an Endpoint
 
 ```
-Give me the full schema for the <operationId> endpoint.
+I need the full raw schema for the <operationId> endpoint.
 ```
 
 ---
@@ -287,12 +287,12 @@ If you intentionally want the entire list, use `--index : `.
 ---
 
 ### generate-client-schema
-Produce structured metadata for client code generation.
+Produce structured metadata for client code generation. This is the recommended first choice for endpoint inspection when you want client-ready shape information.
 
 ---
 
 ### describe
-Return the full raw schema for an endpoint.
+Fallback-only: return the full raw schema for an endpoint when `generate-client-schema` is not sufficient.
 
 ---
 

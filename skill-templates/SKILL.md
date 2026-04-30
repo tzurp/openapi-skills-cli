@@ -19,23 +19,18 @@ Interact with OpenAPI/Swagger-described APIs using deterministic CLI commands.
 
 ## ⚠️ MANDATORY RULES (Non-Negotiable)
 
-### 1. NEVER edit `response.json` or schema files
-- Only `request.json` may be edited. Response files are read-only diagnostic outputs.
-- If validation fails, the API returned data that doesn't match its schema. Adjust `request.json` parameters instead.
-- **To revert `request.json` to the default schema**, use `openapi-skills request <operationId> --api <apiName> --force` (manual edits don't revert to defaults).
-- **To rebuild the original schema-shaped request before patching it**, use `openapi-skills request <operationId> --api <apiName> --force --update-request ...` with a flattened object (dot-notation flattening), for example: `{"user.profile.name":"userProfileName"}`.
+### 1. **MANDATORY: Read reference docs BEFORE generating any code**
+**Non-negotiable. No exceptions.**
 
-### 2. DO NOT run `generate` for an already-parsed API
-- Running `generate` on the same source repeatedly causes unnecessary rebuilds and inconsistency.
-- **First action ALWAYS:** Run `openapi-skills get-api-names` to check existing APIs.
-- **Run `generate` ONLY IF:** The API is not in the list, OR the schema file changed, OR the base URL changed intentionally.
+**These keywords trigger the requirement:**
+- "create test" → read create-endpoint-test.md
+- "generate test" → read create-endpoint-test.md  
+- "write test" → read create-endpoint-test.md
+- "build client" → read write-client-code.md
+- "generate client" → read write-client-code.md
+- "write wrapper" → read write-client-code.md
 
-### 3. ALWAYS use `generate-client-schema` for client code
-- Use `describe` only when you need full raw schema detail that `generate-client-schema` doesn't provide.
-- When `response: null` in output, generate `Promise<void>` as return type.
-
-### 4. REQUIRED: Read reference docs BEFORE generating any code
-**This rule is mandatory and non-negotiable.**
+If ANY of these keywords appear in the user request, STOP and read the reference BEFORE proceeding.
 
 Before generating **any** of the following:
 - client/SDK/wrapper code  
@@ -52,6 +47,21 @@ Before generating **any** of the following:
 
 > “I need to read the required reference document before generating code.”
 
+### 2. NEVER edit `response.json` or schema files
+- Only `request.json` may be edited. Response files are read-only diagnostic outputs.
+- If validation fails, the API returned data that doesn't match its schema. Adjust `request.json` parameters instead.
+- **To revert `request.json` to the default schema**, use `openapi-skills request <operationId> --api <apiName> --force` (manual edits don't revert to defaults).
+- **To rebuild the original schema-shaped request before patching it**, use `openapi-skills request <operationId> --api <apiName> --force --update-request ...` with a flattened object (dot-notation flattening), for example: `{"user.profile.name":"userProfileName"}`.
+
+### 3. DO NOT run `generate` for an already-parsed API
+- Running `generate` on the same source repeatedly causes unnecessary rebuilds and inconsistency.
+- **First action ALWAYS:** Run `openapi-skills get-api-names` to check existing APIs.
+- **Run `generate` ONLY IF:** The API is not in the list, OR the schema file changed, OR the base URL changed intentionally.
+
+### 4. ALWAYS use `generate-client-schema` for client code
+- Use `describe` only as a fallback when you need full raw schema detail that `generate-client-schema` doesn't provide.
+- When `response: null` in output, generate `Promise<void>` as return type.
+
 ### 5. REQUIRED: Always apply filters to narrow endpoint results
 - **NEVER** run `list` without at least one filter; huge APIs will return thousands of endpoints, creating massive output and wasted work.
 - Always combine filters: `--path <prefix>`, `--method <METHOD>`, `--filter <keyword>`, and/or `--index <range>`.
@@ -63,7 +73,7 @@ Before generating **any** of the following:
 ### 6. REQUIRED: Use `openapi-skills` CLI commands; never substitute external tools or agent interpretation
 - Do NOT use curl, axios, Python requests, or other HTTP clients to make API calls. Use `openapi-skills request` instead.
 - Do NOT manually construct requests from the schema; use `openapi-skills generate-client-schema` to get validated structure.
-- Do NOT parse the spec file manually; use `openapi-skills list`, `describe`, or `generate-client-schema` instead.
+- Do NOT parse the spec file manually; use `openapi-skills list` or `generate-client-schema` first; use `describe` only when you truly need the full raw schema.
 - The CLI ensures schema validation, auth headers, and consistent request/response handling.
 - When a user asks to "make a request", "call the API", or "test an endpoint", always use `openapi-skills request` with `--validate`.
 
@@ -83,6 +93,11 @@ Before generating **any** of the following:
    openapi-skills request <operationId> --api <apiName> --force
    ```
 
+## Before Writing ANY Code
+- Is the request asking me to generate tests, clients, or helpers? YES → **STOP. Read the required reference first.**
+- Is the reference already in my context? If unsure, read it anyway.
+- Refuse clearly: "I need to read [specific reference] before generating this code."
+
 ## Decision Matrix: Which Command To Use
 
 | User Request | Decision Path | Command(s) |
@@ -90,9 +105,9 @@ Before generating **any** of the following:
 | "Explore endpoints" | Filter first: use `--method`, `--path`, `--filter`, `--count` to narrow results before full list | `list --api <apiName> --method <METHOD> --path <prefix> --count` |
 | "How many endpoints?" | Check existing APIs → Use `--count` with filters to avoid huge output | `list --api <apiName> --method <METHOD> --count` |
 | "Get the 3rd GET endpoint" | Apply `--method` filter, then select by zero-based `--index` | `list --api <apiName> --method GET --index 2` |
-| "Generate endpoint tests" | **MUST READ** [references/create-endpoint-test.md](references/create-endpoint-test.md) **FIRST** → Check for client code → Set up FetchClient helper → Generate tests | `generate-client-schema` + test file generation |
+| "Generate endpoint tests" | **FIRST: Read [references/create-endpoint-test.md](references/create-endpoint-test.md)** → Then proceed with schema analysis and test generation | Read docs → `generate-client-schema` |
 | "Generate client code" | **MUST READ** [references/write-client-code.md](references/write-client-code.md) **FIRST** → Use openapi-skills generate-client-schema (never parse manually) | `generate-client-schema <operationId> --api <apiName>` |
-| "Show endpoint details" | Use generate-client-schema first; use describe only if insufficient detail | `generate-client-schema <operationId> --api <apiName>` |
+| "Show endpoint details" | Use generate-client-schema first; use describe only if insufficient detail and you need the full raw schema | `generate-client-schema <operationId> --api <apiName>` |
 | "Make a request" / "Debug API" | **ALWAYS use openapi-skills CLI** (never curl/axios/manual). Use `request` with `--validate` | `request <operationId> --api <apiName> --validate [--update-request <json>]` |
 | "Set auth headers" | JSON format required; persisted to config.json for all future requests via CLI | `set-env --api <apiName> --auth <json>` |
 | "Parse a new spec" | Check for existing APIs first; only run `generate` if new or schema changed | `generate <spec-source> [--base-url <url>] [--rename <name>] [--no-progress]` |

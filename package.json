@@ -1,6 +1,6 @@
 {
   "name": "openapi-skills",
-  "version": "0.3.0-beta.0",
+  "version": "0.3.0-beta.1",
   "description": "CLI toolkit for turning OpenAPI specs into agent-ready skills, typed client schemas, request validators, endpoint tests, and exploration tools.",
   "bin": {
     "openapi-skills": "./bin/openapi-skills"
