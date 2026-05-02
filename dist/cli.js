@@ -11,7 +11,7 @@ import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
 import { logger, emitJsonError, emitCommandError, logGeneratedPaths, toErrorMessage } from "./helper/logger.js";
-import { filterEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
+import { filterEndpoints, filterResolvedEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
 import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
 import { promptDeleteConfirmation } from "./helper/prompt-delete.js";
@@ -200,9 +200,10 @@ generateCmd.agentMeta = {
 };
 const listCmd = program
     .command("list")
-    .description("List summarized endpoint objects for the specified API as JSON. Supports advanced --path filtering, --filter, --method, --index slicing, and --count for endpoint totals. At least one filter is required unless '--index : ' is used intentionally.")
+    .description("List summarized endpoint objects for the specified API as JSON. Supports advanced --path filtering, --filter, --method, --resolved/--dereferenced, --index slicing, and --count for endpoint totals. At least one filter is required unless '--index : ' is used intentionally.")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--count", "Return the number of endpoints after applying any list filters and index slicing. With no filters, returns the total endpoint count.")
+    .option("--resolved, --dereferenced", "Show only endpoints that already have generated schema details saved.")
     .option("--path <path>", [
     "Filter endpoints by path structure. Repeatable; multiple values are ANDed.",
     "Supports:",
@@ -230,7 +231,8 @@ const listCmd = program
     const apiName = options.api;
     try {
         const endpointsPath = getEndpointsPath(apiName);
-        const hasFilter = Boolean(options.path || options.filter || options.method || options.index);
+        const resolveRequested = options.resolved === true || options.dereferenced === true;
+        const hasFilter = Boolean(options.path || options.filter || options.method || options.index || resolveRequested);
         const filterOpts = {};
         if (typeof options.path === "string" || Array.isArray(options.path))
             filterOpts.path = options.path;
@@ -270,7 +272,11 @@ const listCmd = program
             return;
         }
         const endpoints = await fs.readJson(endpointsPath);
-        const filtered = sliceEndpointsByIndex(filterEndpoints(endpoints, filterOpts), options.index);
+        let filtered = filterEndpoints(endpoints, filterOpts);
+        if (resolveRequested) {
+            filtered = await filterResolvedEndpoints(apiName, filtered);
+        }
+        filtered = sliceEndpointsByIndex(filtered, options.index);
         if (options.count) {
             logger.result({
                 kind: "endpoint-count",
@@ -281,13 +287,14 @@ const listCmd = program
         }
         if (filtered.length === 0) {
             logger.result([]);
-            if (options.path || options.filter || options.method) {
+            if (options.path || options.filter || options.method || options.index || resolveRequested) {
                 const pathValue = Array.isArray(options.path) ? options.path.join(", ") : options.path;
                 const pathMsg = pathValue ? `path "${pathValue}"` : "";
                 const filterMsg = options.filter ? `filter \"${options.filter}\"` : "";
                 const methodMsg = options.method ? `method \"${options.method}\"` : "";
+                const resolveMsg = resolveRequested ? `resolve` : "";
                 const indexMsg = options.index ? `index \"${options.index}\"` : "";
-                const msg = [pathMsg, filterMsg, methodMsg, indexMsg].filter(Boolean).join(", ");
+                const msg = [pathMsg, filterMsg, methodMsg, resolveMsg, indexMsg].filter(Boolean).join(", ");
                 logger.warn(`No endpoints matched the ${msg}.`);
             }
             return;
@@ -307,12 +314,13 @@ const listCmd = program
 listCmd.agentMeta = {
     name: "list",
     category: "Navigation",
-    usage: "openapi-skills list --api <apiName> [--count] [--path <path>]... [--filter <pattern>] [--method <method>] [--index <range>]",
+    usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--method <method>] [--index <range>]",
     description: [
         "List endpoint summaries for the specified API as JSON, preserving only operationId, method, path, summary, and description.",
         "At least one filter is required to list endpoints. --index is treated as a filter input as well, so the command can run when only an index slice is provided. When no filter is supplied, the command returns a structured warning payload instead of the full endpoint array.",
         "Use --count to return the number of endpoints after applying any list filters and index slicing. When no filters are supplied, it returns the total endpoint count and still emits a JSON count object instead of endpoint summaries.",
-        "Filtering can focus the results of very long endpoint lists. Use --path for advanced path matching, --filter for keywords, and --index to slice the result list. Filtering is case-insensitive and supports:",
+        "Use --resolved (alias --dereferenced) to show only endpoints that already have generated schema details saved.",
+        "Filtering can focus the results of very long endpoint lists. Use --path for advanced path matching, --filter for keywords, --resolved for schema-ready endpoints, and --index to slice the result list. Filtering is case-insensitive and supports:",
         "- Path prefix: --path '/users' (matches endpoints whose path begins with the prefix)",
         "- Parameter detection: --path :param (matches endpoints that contain at least one '{...}' path placeholder)",
         "- Segment matching: --path 'store order' (matches endpoints whose path contains both segments)",
@@ -348,6 +356,7 @@ listCmd.agentMeta = {
     arguments: [
         { name: "api", type: "string", required: true, flag: true, description: "API name to use." },
         { name: "count", type: "flag", required: false, flag: true, description: "Return the number of endpoints after filtering and slicing." },
+        { name: "resolved", type: "flag", required: false, flag: true, description: "Show only endpoints that already have generated schema details saved. Alias: --dereferenced." },
         { name: "path", type: "string[]", required: false, flag: true, description: "Filter endpoints by path structure." },
         { name: "filter", type: "string", required: false, flag: true, description: "Filter endpoints by keywords, operationId, path, summary, or description." },
         { name: "method", type: "string", required: false, flag: true, description: "Filter endpoints by HTTP method." },
@@ -356,12 +365,14 @@ listCmd.agentMeta = {
     examples: [
         "openapi-skills list --api petstore",
         "openapi-skills list --api petstore --count",
+        "openapi-skills list --api petstore --resolved",
         "openapi-skills list --api petstore --path /users",
         "openapi-skills list --api petstore --path /store --path order",
         "openapi-skills list --api petstore --path 'store order'",
         "openapi-skills list --api petstore --path :param",
         "openapi-skills list --api petstore --filter addpet",
         "openapi-skills list --api petstore --filter 'create|register' --method POST",
+        "openapi-skills list --api petstore --resolved --count",
         "openapi-skills list --api petstore --filter '/users'",
         "openapi-skills list --api petstore --index 0:10"
     ],

@@ -1,3 +1,5 @@
+import fs from "fs-extra";
+import { getSchemasDir } from "./paths.js";
 function parseClauses(value) {
     const orGroups = value
         .trim()
@@ -118,6 +120,33 @@ export function filterEndpoints(endpoints, opts) {
         });
     }
     return filtered;
+}
+async function getResolvedOperationIdSet(apiName) {
+    const schemasDir = getSchemasDir(apiName);
+    try {
+        const dirents = await fs.readdir(schemasDir, { withFileTypes: true });
+        return new Set(dirents
+            .filter(dirent => dirent.isFile() && dirent.name.toLowerCase().endsWith(".json"))
+            .map(dirent => dirent.name.slice(0, -".json".length)));
+    }
+    catch (error) {
+        if (error?.code === "ENOENT") {
+            return new Set();
+        }
+        throw error;
+    }
+}
+export async function filterResolvedEndpoints(apiName, endpoints) {
+    const resolvedOperationIds = await getResolvedOperationIdSet(apiName);
+    if (resolvedOperationIds.size === 0) {
+        return [];
+    }
+    return endpoints.filter(endpoint => {
+        const sanitizedOperationId = typeof endpoint.sanitizedOperationId === "string"
+            ? endpoint.sanitizedOperationId
+            : "";
+        return resolvedOperationIds.has(sanitizedOperationId);
+    });
 }
 export function anyEndpointMatches(endpoints, opts) {
     return filterEndpoints(endpoints, opts).length > 0;

@@ -55,11 +55,12 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - When `response: null`, generate `Promise<void>`.
 
 ### 4. REQUIRED: Always apply filters to narrow endpoint results
-- Never run `list` without a filter.
+- Never run `list` without a filter such as `--method`, `--path`, `--filter`, `--index`, or `--resolved`.
 - Prefer `--method <METHOD>` first, then add `--path <prefix>`, `--filter <keyword>`, or `--index <range>` as needed.
 - Use zero-based `--index` values, or index ranges like `0:5` to limit results.
 - Use `--count` first when exploring an unknown API.
 - Example: `openapi-skills list --api petstore --method GET --path /pet --index 0:5`.
+- If you only want endpoints that already have generated schema details saved, add `--resolved` (alias `--dereferenced`).
 
 ### 5. REQUIRED: Use `openapi-skills` CLI commands; never substitute external tools or agent interpretation
 - Use `openapi-skills request` for API calls.
@@ -72,6 +73,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Run `openapi-skills request <operationId> --api <apiName>` before `get-operation --request`, `--response`, or `--response-schema`.
 - Use `generate-client-schema`, `describe`, `list`, `get-env`, and `get-api-names` instead of opening generated files.
 - If artifacts look stale, rerun `openapi-skills request <operationId> --api <apiName> --force`.
+- Avoid these filenames: request.json, response.json, bundled.json, components.json, endpoints.json, config.json.
 
 ### 7. REQUIRED: Inspect the request template before patching or reusing it
 - If you need to change a request before sending it, first rebuild the template with:
@@ -94,7 +96,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 
 | User Request | Do this |
 |---|---|
-| "Explore endpoints" | Use `list` with `--method` and `--path` first, then add `--filter`, `--index`, or `--count` as needed. |
+| "Explore endpoints" | Use `list` with `--method` and `--path` first, then add `--filter`, `--index`, ``--resolved`, or `--count` as needed. |
 | "How many endpoints?" | Run `list --api <apiName> --method <METHOD> --count`. |
 | "Get the 3rd GET endpoint" | Run `list --api <apiName> --method GET --index 2`. |
 | "Generate endpoint tests" | Read `references/create-endpoint-test.md`, then use `generate-client-schema`. |
@@ -135,7 +137,8 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 1. Check existing APIs: `openapi-skills get-api-names`
 2. If not listed, parse it: `openapi-skills generate ./petstore.yaml --base-url https://api.example.com --no-progress`
 3. List endpoints: `openapi-skills list --api petstore --path /pet`
-4. Inspect endpoint: `openapi-skills generate-client-schema getPetById --api petstore`
+4. If you only want endpoints with ready-to-use schema details, add `--resolved`.
+5. Inspect endpoint: `openapi-skills generate-client-schema getPetById --api petstore`
 
 ### Generate Client Code
 
@@ -186,7 +189,7 @@ Then inspect `request.json` to confirm changes are correct.
 | "API not found" when running `list` or `request` | Run `openapi-skills generate <spec>` first. |
 | `get-api-names` returns 0 APIs | Parse a spec with `generate`. |
 | `list` returns empty `[]` | Broaden or change the filters, or use `--count`. |
-| Large API takes forever to list | Add `--method`, `--path`, or `--filter`. |
+| Large API takes forever to list | Add `--method`, `--path`, `--filter`, `--index` or `--resolved`. |
 | request fails | Adjust values using `request --force --update-request` with a single-quoted JSON object containing flattened dot-notation keys. |
 | "required property X missing" | Rebuild the request template with `--force`, then patch it. |
 | "Invalid type: expected integer, got string" | Use the correct JSON value type in `--update-request`. |
