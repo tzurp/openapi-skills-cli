@@ -45,8 +45,8 @@ function buildUpdateRequestWarning(requestJsonUpdates) {
     const flattened = flattenToDotNotation(requestJsonUpdates);
     const example = JSON.stringify(flattened);
     return [
-        `Use Flattened object (dot-notation flattening) with --force flag.`,
-        `Example: --update-request '${example}' --force.`,
+        `Use only flattened object dot-notation keys with --force.`,
+        `Example: --force --update-request '${example}'.`,
         `Detected nested keys: ${nestedKeys.join(", ")}.`
     ].join(" ");
 }

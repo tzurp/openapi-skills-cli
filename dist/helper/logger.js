@@ -35,4 +35,22 @@ export const logger = {
         process.stdout.write(`${JSON.stringify(data)}\n`);
     },
 };
+export function emitJsonError(error, details) {
+    const payload = { error };
+    if (details) {
+        payload.details = details;
+    }
+    logger.result(payload);
+}
+export function emitCommandError(label, details) {
+    logger.error(`${label}: ${details}`);
+}
+export function toErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+export function logGeneratedPaths(lines) {
+    for (const line of lines) {
+        logger.info(line);
+    }
+}
 //# sourceMappingURL=logger.js.map

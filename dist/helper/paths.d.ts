@@ -6,6 +6,7 @@ export declare function getSchemasDir(apiName: string): string;
 export declare function getApiDir(apiName: string): string;
 export declare function getConfigPath(): string;
 export declare function getEndpointsPath(apiName: string): string;
+export declare function getOperationArtifactPath(apiName: string, sanitizedOperationId: string, artifactName: "request" | "response" | "response-schema"): string;
 export declare function getOpenapiToSkillsDir(): string;
 export declare function getProjectRoot(): string;
 //# sourceMappingURL=paths.d.ts.map

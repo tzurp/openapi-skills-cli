@@ -27,6 +27,11 @@ export function getConfigPath() {
 export function getEndpointsPath(apiName) {
     return path.resolve(projectRoot, ".openapi-skills", apiName, "endpoints.json");
 }
+export function getOperationArtifactPath(apiName, sanitizedOperationId, artifactName) {
+    const requestResponseDir = findRequestResponseDir(apiName, sanitizedOperationId);
+    const fileName = artifactName === "response-schema" ? "response-schema.json" : `${artifactName}.json`;
+    return path.join(requestResponseDir, fileName);
+}
 export function getOpenapiToSkillsDir() {
     return path.resolve(projectRoot, ".openapi-skills");
 }

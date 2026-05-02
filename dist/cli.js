@@ -1,196 +1,26 @@
-import os from "os";
-import https from "https";
 import { Command } from "commander";
 import parseOpenAPI, { validateSchema } from "./parser.js";
 import fs from "fs-extra";
 import path from "path";
-import readline from "readline";
-import { findRequestResponseDir, getOpenapiToSkillsDir, getProjectRoot } from "./helper/paths.js";
+import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
 import { ensureConfig, updateConfig, listApis, getConfigValue, listEndpoints, deleteApi } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
 import {} from "./helper/json-updater.js";
-import { validateResponse, makeRequest, prepareRequestTemplate } from "./validate-response.js";
+import { validateResponse, makeRequest } from "./validate-response.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
-import { logger } from "./helper/logger.js";
+import { logger, emitJsonError, emitCommandError, logGeneratedPaths, toErrorMessage } from "./helper/logger.js";
 import { filterEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
-function emitJsonError(error, details) {
-    const payload = { error };
-    if (details) {
-        payload.details = details;
-    }
-    logger.result(payload);
-}
-function emitCommandError(label, details) {
-    logger.error(`${label}: ${details}`);
-}
-async function checkForUpdateOncePerTerminalSession() {
-    try {
-        const sessionId = String(process.ppid);
-        const sessionFile = path.join(os.tmpdir(), `openapi-skills-session-${sessionId}`);
-        if (fs.existsSync(sessionFile))
-            return;
-        fs.writeFileSync(sessionFile, String(Date.now()));
-        const latestVersion = await new Promise((resolve, reject) => {
-            https.get("https://registry.npmjs.org/openapi-skills/latest", res => {
-                let data = "";
-                res.on("data", chunk => (data += chunk));
-                res.on("end", () => {
-                    try {
-                        const json = JSON.parse(data);
-                        resolve(json.version);
-                    }
-                    catch (err) {
-                        reject(err);
-                    }
-                });
-            }).on("error", reject);
-        });
-        const currentVersion = pkg.version;
-        if (latestVersion && latestVersion !== currentVersion) {
-            logger.warn(`UPDATE_AVAILABLE: A newer version of openapi-skills is available → ${latestVersion} (current: ${currentVersion})`);
-            logger.warn("Update with: npm install -g openapi-skills");
-        }
-    }
-    catch {
-    }
-}
-function getRequestResponseMetadata(apiName, operationId) {
-    const requestResponseDir = findRequestResponseDir(apiName, operationId);
-    const requestPath = path.join(requestResponseDir, "request.json");
-    const responsePath = path.join(requestResponseDir, "response.json");
-    const responseSchemaPath = path.join(requestResponseDir, "response-schema.json");
-    const files = fs.existsSync(requestResponseDir)
-        ? fs.readdirSync(requestResponseDir).map(file => path.join(requestResponseDir, file))
-        : [];
-    return {
-        requestResponseDir,
-        files,
-        fileCount: files.length,
-        requestPath,
-        responsePath,
-        responseSchemaPath,
-    };
-}
-function getOperationArtifactPath(apiName, sanitizedOperationId, artifactName) {
-    const requestResponseDir = findRequestResponseDir(apiName, sanitizedOperationId);
-    const fileName = artifactName === "response-schema" ? "response-schema.json" : `${artifactName}.json`;
-    return path.join(requestResponseDir, fileName);
-}
-function resolveSelectedArtifact(options) {
-    const selectedArtifacts = [];
-    if (options.request)
-        selectedArtifacts.push("request");
-    if (options.response)
-        selectedArtifacts.push("response");
-    if (options.responseSchema)
-        selectedArtifacts.push("response-schema");
-    if (selectedArtifacts.length !== 1) {
-        return {
-            artifactName: undefined,
-            error: selectedArtifacts.length === 0
-                ? "Exactly one of --request, --response, or --response-schema is required."
-                : "Only one of --request, --response, or --response-schema can be used at a time.",
-        };
-    }
-    return { artifactName: selectedArtifacts[0], error: undefined };
-}
-function toRelativeWorkspacePath(apiName, absolutePath) {
-    const apiDir = path.join(openapiToSkillsDir, apiName);
-    return path.relative(apiDir, absolutePath).split(path.sep).join("/");
-}
-async function promptDeleteConfirmation(apiName) {
-    const prompt = `Are you sure you want to delete ${apiName}? Y/n `;
-    return await new Promise(resolve => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-        rl.question(prompt, answer => {
-            rl.close();
-            const normalized = answer.trim().toLowerCase();
-            resolve(normalized === "y" || normalized === "yes");
-        });
-    });
-}
-async function resolveMultiOperationIds(apiName, operationIds) {
-    const seen = new Set();
-    const duplicates = new Set();
-    for (const operationId of operationIds) {
-        if (seen.has(operationId)) {
-            duplicates.add(operationId);
-        }
-        seen.add(operationId);
-    }
-    if (duplicates.size > 0) {
-        throw new Error(`Duplicate operationId(s) are not allowed in prepare-only mode: ${Array.from(duplicates).join(", ")}`);
-    }
-    const apis = await listApis();
-    if (!Array.isArray(apis) || !apis.includes(apiName)) {
-        throw new Error(`API '${apiName}' is not installed. Run generate first.`);
-    }
-    const resolved = [];
-    for (const operationId of operationIds) {
-        const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
-        if (!sanitizedOperationId) {
-            throw new Error(`OperationId '${operationId}' was not found for API '${apiName}'.`);
-        }
-        resolved.push({ operationId, sanitizedOperationId });
-    }
-    return resolved;
-}
-async function prepareMultiOperationRequests(apiName, operationIds, force = false) {
-    const resolvedOperationIds = await resolveMultiOperationIds(apiName, operationIds);
-    const operations = [];
-    for (const { operationId, sanitizedOperationId } of resolvedOperationIds) {
-        await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
-        await prepareRequestTemplate(apiName, sanitizedOperationId, force);
-        const metadata = getRequestResponseMetadata(apiName, sanitizedOperationId);
-        operations.push({
-            kind: "request-result",
-            apiName,
-            operationId,
-            sanitizedOperationId,
-            preparedOnly: true,
-            request: null,
-            response: null,
-            warnings: [],
-            ...metadata,
-        });
-    }
-    const summaryLines = [
-        `Prepared request templates for ${operations.length} operations:`,
-        "",
-        ...operations.map(operation => `  ✓ ${operation.operationId} → ${toRelativeWorkspacePath(apiName, operation.requestPath)}`),
-        "",
-        "No live requests were executed.",
-        "Use `openapi-skills request <operationId> --update-request ...` to run each step.",
-    ];
-    const payload = {
-        kind: "request-result",
-        apiName,
-        preparedOnly: true,
-        operationIds,
-        summary: summaryLines,
-        message: "No live requests were executed.",
-        hint: "Use `openapi-skills request <operationId> --update-request ...` to run each step.",
-        operations,
-    };
-    return {
-        operations,
-        summaryText: summaryLines.join("\n"),
-        payload,
-    };
-}
-function toErrorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
-}
-const openapiToSkillsDir = getOpenapiToSkillsDir();
-function getEndpointsPath(schemaName) {
-    return path.join(openapiToSkillsDir, schemaName, "endpoints.json");
-}
+import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
+import { promptDeleteConfirmation } from "./helper/prompt-delete.js";
+import { resolveSelectedArtifact } from "./helper/request-artifacts.js";
+import { prepareMultiOperationRequests, getRequestResponseMetadata } from "./helper/request-preparation.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
-await checkForUpdateOncePerTerminalSession();
+await checkForUpdateOncePerTerminalSession(pkg.version);
+const openapiToSkillsDir = getOpenapiToSkillsDir();
 const program = new Command();
 program.name("openapi-skills")
     .description("A command‑line tool for working with OpenAPI 2/3 schemas. Use it to explore API endpoints, validate and test requests, generate typed client‑code schemas, and produce skills for agent frameworks.")
@@ -311,17 +141,14 @@ const generateCmd = program
             kind: "generate-result",
             apiName,
             openapiSource,
-            outputDir: outDir,
-            configPath,
-            endpointsPath: path.join(outDir, "endpoints.json"),
-            schemasDir: path.join(outDir, "schemas"),
-            files: [
-                path.join(outDir, "endpoints.json"),
-                configPath,
-                path.join(outDir, "schemas"),
-            ],
             fileCount: 3,
         });
+        logGeneratedPaths([
+            `Generated files for ${apiName}:`,
+            `- ${path.join(outDir, "endpoints.json")}`,
+            `- ${path.join(outDir, "schemas")}`,
+            `- ${configPath}`,
+        ]);
         process.exitCode = 0;
     }
     catch (error) {
@@ -557,12 +384,13 @@ listCmd.agentMeta = {
 const genClientSchemaCmd = program
     .command("generate-client-schema <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
-    .description("Return structured metadata for client code generation for a specific endpoint.")
+    .option("--force", "Overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before generating metadata.")
+    .description("Return structured metadata for client code generation for a specific endpoint. Use --force to overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before reading it.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     try {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
-        const schema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
+        const schema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId, options.force === true);
         logger.result(schema);
     }
     catch (error) {
@@ -578,14 +406,16 @@ const genClientSchemaCmd = program
 genClientSchemaCmd.agentMeta = {
     name: "generate-client-schema",
     category: "Code Generation",
-    usage: "openapi-skills generate-client-schema <operationId> --api <apiName>",
-    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Works for all endpoints. Returns `response: null` for endpoints with no JSON response body (e.g., DELETE operations) — generate `Promise<void>` as the return type in that case.",
+    usage: "openapi-skills generate-client-schema <operationId> --api <apiName> [--force]",
+    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Works for all endpoints. Returns `response: null` for endpoints with no JSON response body (e.g., DELETE operations) — generate `Promise<void>` as the return type in that case. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before generating output.",
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the endpoint to inspect." },
-        { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." }
+        { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
+        { name: "force", type: "flag", required: false, flag: true, description: "Overwrite the cached schema file before generating metadata." }
     ],
     examples: [
-        "openapi-skills generate-client-schema addPet --api petstore"
+        "openapi-skills generate-client-schema addPet --api petstore",
+        "openapi-skills generate-client-schema addPet --api petstore --force"
     ],
     returns: {
         type: "json",
@@ -606,12 +436,13 @@ genClientSchemaCmd.agentMeta = {
 const describeCmd = program
     .command("describe <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
-    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes.")
+    .option("--force", "Overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before printing the raw schema.")
+    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     try {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
-        const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
+        const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, options.force === true);
         logger.result({
             kind: "describe-result",
             apiName,
@@ -632,19 +463,21 @@ const describeCmd = program
 describeCmd.agentMeta = {
     name: "describe",
     category: "Navigation",
-    usage: "openapi-skills describe <operationId> --api <apiName>",
+    usage: "openapi-skills describe <operationId> --api <apiName> [--force]",
     description: [
-        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes.",
+        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.",
         "",
         "**Agents MUST use `generate-client-schema` for client code generation. Use `describe` only as a fallback when you need full raw schema detail beyond what `generate-client-schema` provides, or when `generate-client-schema` is insufficient.**"
     ].join("\n"),
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the endpoint to describe." },
-        { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." }
+        { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
+        { name: "force", type: "flag", required: false, flag: true, description: "Overwrite the cached schema file before printing the raw schema." }
     ],
     examples: [
         "openapi-skills describe getPetById --api petstore",
-        "openapi-skills describe deletePet --api petstore"
+        "openapi-skills describe deletePet --api petstore",
+        "openapi-skills describe getPetById --api petstore --force"
     ],
     returns: {
         type: "json",
@@ -668,7 +501,7 @@ const getOperationCmd = program
     .option("--request", "Return request.json for the operation.")
     .option("--response", "Return response.json for the operation.")
     .option("--response-schema", "Return response-schema.json for the operation.")
-    .description("Return one stored operation artifact as JSON. Exactly one of --request, --response, or --response-schema is required.")
+    .description("Return one stored operation artifact as JSON. Run `request` first for the same operationId so the artifact exists. Exactly one of --request, --response, or --response-schema is required.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     const selection = resolveSelectedArtifact(options);
@@ -697,7 +530,7 @@ getOperationCmd.agentMeta = {
     name: "get-operation",
     category: "Navigation",
     usage: "openapi-skills get-operation <operationId> --api <apiName> [--request] [--response] [--response-schema]",
-    description: "Return a single operation artifact from .openapi-skills/<apiName>/schemas/<operationId>/ as raw JSON. Exactly one selector flag is required.",
+    description: "Return a stored operation artifact created by `openapi-skills request` as raw JSON. Run `request` for the same operationId first so the artifact exists. The first example shows that prerequisite request step. Exactly one selector flag is required.",
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId whose stored artifact should be returned." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
@@ -706,6 +539,7 @@ getOperationCmd.agentMeta = {
         { name: "response-schema", type: "flag", required: false, flag: true, description: "Return response-schema.json for the operation." }
     ],
     examples: [
+        "openapi-skills request getPetById --api petstore --force",
         "openapi-skills get-operation getPetById --api petstore --request",
         "openapi-skills get-operation getPetById --api petstore --response",
         "openapi-skills get-operation getPetById --api petstore --response-schema"
@@ -728,19 +562,21 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific endpoint, or prepare multiple request templates without executing requests. Supports: --validate (validate response), --force (regenerate request.json; use it when you want the original schema-shaped template), --update-request (patch request.json; use it without --force if you want to keep previous request values, or with --force to rebuild defaults first using flattened object dot-notation), --header (add headers).")
+    .description("Make a live HTTP request for a specific endpoint, or prepare multiple request templates without executing requests. Supports: --validate (validate response), --force (regenerate request.json; use it when you want the original schema-shaped template), --update-request (patch request.json; only flattened object dot-notation keys are allowed), --header (add headers).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate the response against the schema.")
     .option("--force", "Force overwrite request.json file with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
     .option("--update-request <json>", [
-    "Update request.json before making the request using a JSON object with dot notation for deep/array updates.",
-    "Use flattened object (dot-notation flattening) with --force when you want to rebuild the original schema-shaped request template and then patch it; omit --force if you want to keep previous request values.",
-    "  Format: --update-request '{\"field\":value,...}'",
-    "  - Dot notation supports nested fields and arrays (e.g. 'items.0.name').",
+    "Update request.json before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
+    "Nested JSON objects are supported (they will be flattened and issue a warning), but the top-level value must be a JSON object. Invalid JSON will cause the command to fail.",
+    "Format (POSIX shells): --update-request '{\"field.path\":value,...}'",
+    "Format (PowerShell): --update-request \"{\"field.path\":value,...}\"  (escape inner quotes as needed)",
+    "  - Only flattened object dot-notation keys are recommended (e.g. 'items.0.name').",
     "Examples:",
     "   --update-request '{\"person.id\":\"2\"}'",
     "   --update-request '{\"items.0.name\":\"Alice\",\"items.1.value\":42}'",
-    "   --update-request '{\"address.street\":\"Main St\",\"address.zip\":12345}'"
+    "   --update-request '{\"address.street\":\"Main St\",\"address.zip\":12345}'",
+    "Note: The CLI runs JSON.parse on the provided value; if parsing fails the command exits with an error."
 ].join("\n"))
     .option("--header <json>", [
     "Additional headers as a JSON string (merged with config and defaults).",
@@ -780,21 +616,22 @@ const requestCmd = program
     }
     let requestJsonUpdates;
     if (options.updateRequest) {
+        let updates;
         try {
-            let updates = {};
-            try {
-                updates = JSON.parse(options.updateRequest);
-            }
-            catch (err) {
-                logger.warn(`Could not parse --update-request as JSON. Skipping update. ${err instanceof Error ? err.message : String(err)}`);
-            }
-            if (typeof updates === "object" && updates && !Array.isArray(updates) && Object.keys(updates).length > 0) {
-                requestJsonUpdates = updates;
-            }
+            updates = JSON.parse(options.updateRequest);
         }
         catch (err) {
-            logger.warn(`Failed to update request.json before request. Proceeding with original file. ${err instanceof Error ? err.message : String(err)}`);
+            const message = `Invalid JSON for --update-request: ${err instanceof Error ? err.message : String(err)}`;
+            logger.error(message);
+            process.exitCode = 2;
+            return;
         }
+        if (typeof updates !== "object" || Array.isArray(updates) || !updates || Object.keys(updates).length === 0) {
+            logger.error("--update-request must be a non-empty JSON object (use flattened dot-notation keys). Example: --update-request '{\"field.path\":value}'");
+            process.exitCode = 2;
+            return;
+        }
+        requestJsonUpdates = updates;
     }
     let cliHeaders = undefined;
     if (options.header) {
@@ -816,6 +653,15 @@ const requestCmd = program
         try {
             const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates);
             const metadata = getRequestResponseMetadata(apiName, operationId);
+            const requestJsonPath = getOperationArtifactPath(apiName, operationId, "request");
+            const responseJsonPath = getOperationArtifactPath(apiName, operationId, "response");
+            const responseSchemaPath = getOperationArtifactPath(apiName, operationId, "response-schema");
+            logGeneratedPaths([
+                `Request artifacts for ${apiName} ${operationId}:`,
+                `- ${requestJsonPath}`,
+                `- ${responseJsonPath}`,
+                `- ${responseSchemaPath}`,
+            ]);
             logger.result({
                 kind: "validation-result",
                 apiName,
@@ -823,12 +669,7 @@ const requestCmd = program
                 valid: result.valid,
                 warnings: result.warnings ?? [],
                 errors: result.errors ?? [],
-                requestResponseDir: metadata.requestResponseDir,
-                files: metadata.files,
                 fileCount: metadata.fileCount,
-                requestPath: metadata.requestPath,
-                responsePath: metadata.responsePath,
-                responseSchemaPath: metadata.responseSchemaPath,
             });
             process.exitCode = result.valid ? 0 : 1;
         }
@@ -850,17 +691,21 @@ const requestCmd = program
         try {
             const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates);
             const metadata = getRequestResponseMetadata(apiName, operationId);
+            const requestJsonPath = getOperationArtifactPath(apiName, operationId, "request");
+            const responseJsonPath = getOperationArtifactPath(apiName, operationId, "response");
+            const responseSchemaPath = getOperationArtifactPath(apiName, operationId, "response-schema");
+            logGeneratedPaths([
+                `Request artifacts for ${apiName} ${operationId}:`,
+                `- ${requestJsonPath}`,
+                `- ${responseJsonPath}`,
+                `- ${responseSchemaPath}`,
+            ]);
             logger.result({
                 kind: "request-result",
                 apiName,
                 operationId,
                 warnings: warnings ?? [],
-                requestResponseDir: metadata.requestResponseDir,
-                files: metadata.files,
                 fileCount: metadata.fileCount,
-                requestPath: metadata.requestPath,
-                responsePath: metadata.responsePath,
-                responseSchemaPath: metadata.responseSchemaPath,
             });
             process.exitCode = 0;
         }
@@ -887,14 +732,14 @@ requestCmd.agentMeta = {
         "When multiple operationIds are supplied, the command enters prepare-only mode and only refreshes request.json templates.",
         "With --validate, validate the response against the schema.",
         "With --force, regenerate request.json from schema defaults. Use it with --update-request when you want the original schema-shaped template before patching, and skip it if you want to keep previous request values.",
-        "With --update-request, patch request.json before sending using dot-notation keys for nested objects and numeric segments for arrays, such as user.profile.name or parameters.0.id. Use flattened object dot-notation with --force when you want to restore defaults and patch in the same run."
+        "With --update-request, patch request.json before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. Use --force when you want to restore defaults and patch in the same run."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate the response against the schema." },
         { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request.json with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
-        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request.json before making the request. Use with --force to rebuild defaults first, or without --force to keep previous request values." },
+        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request.json before making the request. Only flattened object dot-notation keys are allowed. Use with --force to rebuild defaults first." },
         { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." }
     ],
     examples: [
@@ -1183,7 +1028,8 @@ getApiNamesCmd.agentMeta = {
 const removeApiCmd = program
     .command("remove-api <apiName>")
     .description("Remove an API from config.json and delete its .openapi-skills directory after confirmation.")
-    .action(async (apiName) => {
+    .option("-y, --yes", "Confirm removal automatically without prompting.")
+    .action(async (apiName, options) => {
     const targetApiName = apiName;
     try {
         const apiNames = await listApis();
@@ -1200,7 +1046,7 @@ const removeApiCmd = program
             process.exitCode = 1;
             return;
         }
-        const confirmed = await promptDeleteConfirmation(targetApiName);
+        const confirmed = options?.yes === true ? true : await promptDeleteConfirmation(targetApiName);
         if (!confirmed) {
             logger.result({ ok: false, message: "Cancelled" });
             process.exitCode = 0;
@@ -1231,13 +1077,14 @@ const removeApiCmd = program
 removeApiCmd.agentMeta = {
     name: "remove-api",
     category: "Configuration",
-    usage: "openapi-skills remove-api <apiName>",
+    usage: "openapi-skills remove-api <apiName> [--yes|-y]",
     description: "Remove a parsed API after confirmation. The command deletes the API entry from config.json and removes the API directory under .openapi-skills.",
     arguments: [
-        { name: "apiName", type: "string", required: true, positional: true, description: "The API name to remove." }
+        { name: "apiName", type: "string", required: true, positional: true, description: "The API name to remove." },
+        { name: "yes", type: "flag", required: false, flag: true, description: "Confirm removal automatically without prompting." }
     ],
     examples: [
-        "openapi-skills remove-api petstore"
+        "openapi-skills remove-api petstore --yes"
     ],
     returns: {
         type: "json",

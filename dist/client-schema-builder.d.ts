@@ -18,5 +18,5 @@ export interface ClientCodeSchema {
     errors: Record<string, any>;
     enums: Record<string, string[]>;
 }
-export declare function buildClientCodeSchema(apiName: string, operationId: string, sanitizedOperationId: string): Promise<ClientCodeSchema>;
+export declare function buildClientCodeSchema(apiName: string, operationId: string, sanitizedOperationId: string, force?: boolean): Promise<ClientCodeSchema>;
 //# sourceMappingURL=client-schema-builder.d.ts.map

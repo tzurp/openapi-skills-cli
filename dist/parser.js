@@ -105,9 +105,9 @@ export async function dereferenceEndpointLater(endpointSchema, bundledComponents
     }
     return cleaned;
 }
-export async function ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId) {
+export async function ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force = false) {
     const schemaPath = getSchemaPath(apiName, sanitizedOperationId);
-    if (await fs.pathExists(schemaPath)) {
+    if (!force && await fs.pathExists(schemaPath)) {
         return fs.readJson(schemaPath);
     }
     const bundledPath = getBundledPath(apiName);

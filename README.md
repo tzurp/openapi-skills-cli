@@ -143,7 +143,7 @@ The agent will:
 
 - prepare all steps at once with `openapi-skills request addPet getPetById --api <apiName>`
 - inspect the first template with `openapi-skills get-operation addPet --request`
-- patch and execute `addPet` with `openapi-skills request addPet --update-request '{"field":"value"}'`
+ - patch and execute `addPet` with `openapi-skills request addPet --force --update-request '{"pet.name":"Fluffy"}'` using a single-quoted JSON string. Invalid JSON will cause the command to fail.
 - inspect the response with `openapi-skills get-operation addPet --response`
 - feed the returned id into `getPetById` as the next step in the chain
 
@@ -297,7 +297,7 @@ Fallback-only: return the full raw schema for an endpoint when `generate-client-
 ---
 
 ### get-operation
-Return one stored operation artifact as raw JSON.
+Return one stored operation artifact as raw JSON. Run `openapi-skills request <operationId> --api <apiName>` first so the artifact exists for that same operationId.
 
 Supports exactly one of:
 
@@ -319,8 +319,8 @@ Make a live HTTP request for an endpoint. When you pass multiple operationIds, t
 Supports:
 
 - `--validate` (validate response, suppresses request/response output)
-- `--force` (regenerate request.json; recommended with `--update-request` when rebuilding the original schema-shaped template)
-- `--update-request` (patch request.json; recommended with `--force` when you want to rebuild the original schema-shaped request first)
+- `--force` (regenerate request.json; use before `--update-request` when you want the original schema-shaped template)
+- `--update-request` (patch request.json; pass a JSON string of flattened dot-notation keys — single-quote in POSIX shells). Invalid JSON will cause the command to fail.
 - `--header` (add headers)
 
 Prepare-only mode:
@@ -345,9 +345,9 @@ openapi-skills request step1 step2 step3 --api <apiName>
 Workflow for chained steps:
 
 1. Prepare the templates for all steps with `openapi-skills request step1 step2 step3 --api <apiName>`.
-2. Inspect a template with `openapi-skills get-operation <opId> --request`.
+2. Inspect a template with `openapi-skills get-operation <opId> --request` after `request` has created it.
 3. Rebuild the template with `openapi-skills request <opId> --force` when you want the original schema-shaped request back.
-4. Patch a request with `openapi-skills request <opId> --force --update-request '{"field":"value"}'`.
+4. Patch a request with `openapi-skills request <opId> --force --update-request '{"field.path":"value"}'` using a single-quoted JSON string. Invalid JSON will cause the command to fail.
 5. Execute the request with `openapi-skills request <opId>`.
 6. Inspect the response with `openapi-skills get-operation <opId> --response`.
 

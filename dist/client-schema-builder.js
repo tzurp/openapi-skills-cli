@@ -64,12 +64,55 @@ function findJsonContent(content) {
 }
 function extractSuccessSchema(responses) {
     const success = findSuccessResponse(responses);
-    if (!success || !success.content)
+    if (!success)
         return null;
-    const json = findJsonContent(success.content);
-    if (!json || !json.schema)
+    if (success.content) {
+        const json = findJsonContent(success.content);
+        if (!json || !json.schema)
+            return null;
+        return json.schema;
+    }
+    return success.schema ?? null;
+}
+function extractResponseSchemaOAS2(responses) {
+    const success = findSuccessResponse(responses);
+    if (!success)
         return null;
-    return json.schema;
+    return success.schema ?? null;
+}
+function extractRequestSchemaOAS2(operation) {
+    const params = Array.isArray(operation?.parameters) ? operation.parameters : [];
+    const bodyParam = params.find((p) => p.in === "body");
+    if (bodyParam?.schema) {
+        return bodyParam.schema;
+    }
+    const formParams = params.filter((p) => p.in === "formData");
+    if (formParams.length === 0) {
+        return null;
+    }
+    const schema = { type: "object", properties: {} };
+    for (const param of formParams) {
+        const propertySchema = {};
+        if (param.schema && typeof param.schema === "object") {
+            Object.assign(propertySchema, param.schema);
+        }
+        else {
+            if (typeof param.type === "string")
+                propertySchema.type = param.type;
+            if (param.items)
+                propertySchema.items = param.items;
+            if (typeof param.format === "string")
+                propertySchema.format = param.format;
+            if (Array.isArray(param.enum))
+                propertySchema.enum = param.enum;
+            if (param.type === "file") {
+                propertySchema.type = "string";
+                propertySchema.format = "binary";
+            }
+        }
+        schema.properties[param.name] = propertySchema;
+    }
+    return schema;
 }
 const defaultErrorSchema = {
     type: "object",
@@ -89,7 +132,7 @@ function extractErrorSchemas(responses) {
             continue;
         const content = resp.content;
         const json = content ? findJsonContent(content) : null;
-        const schema = json && json.schema ? json.schema : defaultErrorSchema;
+        const schema = json && json.schema ? json.schema : resp.schema ?? defaultErrorSchema;
         result[status] = schema;
     }
     return result;
@@ -111,13 +154,13 @@ function normalizeParams(grouped, operationId) {
         schema: flat
     };
 }
-export async function buildClientCodeSchema(apiName, operationId, sanitizedOperationId) {
+export async function buildClientCodeSchema(apiName, operationId, sanitizedOperationId, force = false) {
     const endpoints = await fs.readJson(getEndpointsPath(apiName));
     const endpoint = endpoints.find((ep) => ep.operationId === operationId);
     if (!endpoint) {
         throw new Error(`Endpoint with operationId '${operationId}' not found.`);
     }
-    const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
+    const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force);
     const groupedParams = {
         path: {},
         query: {},
@@ -132,7 +175,7 @@ export async function buildClientCodeSchema(apiName, operationId, sanitizedOpera
             };
         }
     }
-    const successSchema = extractSuccessSchema(schema.responses);
+    const successSchema = extractSuccessSchema(schema.responses) ?? extractResponseSchemaOAS2(schema.responses);
     const enums = {};
     if (successSchema) {
         removeXml(successSchema);
@@ -146,6 +189,13 @@ export async function buildClientCodeSchema(apiName, operationId, sanitizedOpera
         const json = findJsonContent(requestBody.content);
         if (json && json.schema) {
             requestBodySchema = json.schema;
+            removeXml(requestBodySchema);
+            extractEnums(requestBodySchema, enums, `${operationId}_request`);
+        }
+    }
+    else {
+        requestBodySchema = extractRequestSchemaOAS2(schema);
+        if (requestBodySchema) {
             removeXml(requestBodySchema);
             extractEnums(requestBodySchema, enums, `${operationId}_request`);
         }

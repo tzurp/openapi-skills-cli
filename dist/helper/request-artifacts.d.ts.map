@@ -1,0 +1,1 @@
+{"version":3,"file":"request-artifacts.d.ts","sourceRoot":"","sources":["../../src/helper/request-artifacts.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,qBAAqB,GAAG,SAAS,GAAG,UAAU,GAAG,iBAAiB,CAAC;AAE/E,wBAAgB,uBAAuB,CAAC,OAAO,EAAE;IAAE,OAAO,CAAC,EAAE,OAAO,CAAC;IAAC,QAAQ,CAAC,EAAE,OAAO,CAAC;IAAC,cAAc,CAAC,EAAE,OAAO,CAAA;CAAE;;WAgBjD,MAAM,GAAG,SAAS;EACpF"}
