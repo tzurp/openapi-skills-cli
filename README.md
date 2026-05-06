@@ -299,6 +299,8 @@ Fallback-only: return the full raw schema for an endpoint when `generate-client-
 ### get-operation
 Return one stored operation artifact as raw JSON. Run `openapi-skills request <operationId> --api <apiName>` first so the artifact exists for that same operationId.
 
+Alias: `openapi-skills get-operation-artifact`.
+
 Supports exactly one of:
 
 - `--request`
@@ -310,6 +312,20 @@ Example:
 ```bash
 openapi-skills get-operation getPetById --api petstore --request
 ```
+
+The alias works the same way:
+
+```bash
+openapi-skills get-operation-artifact getPetById --api petstore --request
+```
+
+Use `--get` to narrow the stored artifact first, then apply `--filter` to the narrowed result when the selected value is an array:
+
+```bash
+openapi-skills get-operation getPetById --api petstore --response --get body --filter id=555
+```
+
+`--filter` still works on its own for array artifacts, and `--get` still works on its own for deep values.
 
 ---
 

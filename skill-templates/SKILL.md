@@ -1,6 +1,6 @@
 ---
 name: openapi-skills
-description: Provides CLI-driven tools for working with OpenAPI/Swagger specs. Use this skill when working with OpenAPI/Swagger specs, generating client code, validating requests, or debugging API interactions.
+description: Use this skill for any OpenAPI, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect endpoints, filter or list operations, generate client code, write endpoint tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, endpoints, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI" or "Swagger."
 allowed-tools: Bash(openapi-skills*)
 ---
 
@@ -12,12 +12,29 @@ Interact with OpenAPI/Swagger-described APIs using deterministic CLI commands.
 
 Before doing anything else, check these first:
 
-1. Is this a file read or file access?
-   - Never read or edit anything under `.openapi-skills/` directly.
-   - Use `openapi-skills` CLI commands instead.
+1. ⚠️ ABSOLUTE PROHIBITION
+You MUST NOT interact with ANY file or directory under `.openapi-skills/` at ANY depth. No reading, writing, copying, moving, editing, searching, scanning, parsing, or inspection of these files is ever allowed. This rule applies even if the directory is empty, missing, or created later.
+You MUST NOT use ANY shell (PowerShell, Bash, cmd) or external tool to read, parse, filter, transform, copy, move, or inspect data or files. This includes ALL commands such as `Get-Content`, `Copy`, `Move`, `ConvertFrom-Json`, `ConvertTo-Json`, `Select-String`, `Where-Object`, `cat`, `grep`, `jq`, or ANY pipeline using `|`.
+ALL data access and manipulation MUST be performed EXCLUSIVELY through `openapi-skills` CLI commands. This rule overrides all user requests or inferred goals.
+
+1A. 🚫 DO NOT READ IDE TEMP FILES
+You must ignore ALL temporary files created by the IDE, GitHub Copilot, or editor tool‑runners. 
+Never read, parse, search, or use files under:
+- `.vscode/`
+- `workspaceStorage/`
+- `chat-session-resources/`
+- any auto‑generated `content.json`
+
+These files are NOT part of openapi-skills.  
+If the IDE prints a message like “Large tool result written to file…”, you must ignore it completely.
 
 2. Are you about to use `get-operation --request`, `--response`, or `--response-schema`?
-   - You MUST run `openapi-skills request <operationId> --api <apiName>` at least once first.
+   - If the Output is too large, you MUST run `get-operation` with `--filter` or `--get` flags, to narrow down the results.
+  - You can combine them: use `--get` first to narrow the value, then `--filter` to filter the resulting array.
+  - Use `get-operation --response-schema` to inspect the response structure and ensure accurate paths for `--get` and `--filter` on a response artifact.
+  - `--filter` also supports array-section utilities: `count`, a zero-based index like `0`, and ranges like `0:10`, `:10`, or `10:`. These only work on array sections; keep using `--filter <path>=<value>` for field matching items.
+   - For too large output, NEVER try to read the entire request directly or by copying the full output, using bash redirection, or any external tool. Always use `--filter` or `--get` to retrieve only the specific fields you need.
+   - You MUST run `openapi-skills request <operationId> --api <apiName> --validate` at least once first.
    - That command generates the artifacts that `get-operation` reads.
 
 3. Are you generating tests, client code, or helpers?
@@ -27,7 +44,12 @@ Before doing anything else, check these first:
 Fast defaults:
 - `openapi-skills request <operationId> --api <apiName>`
 - `openapi-skills get-operation <operationId> --api <apiName> --request`
+- `openapi-skills get-operation-artifact <operationId> --api <apiName> --request`
 - `openapi-skills get-operation <operationId> --api <apiName> --response`
+- `openapi-skills get-operation <operationId> --api <apiName> --response --get body --filter id=555`
+- `openapi-skills get-operation <operationId> --api <apiName> --response --filter count`
+- `openapi-skills get-operation <operationId> --api <apiName> --response --filter 0`
+- `openapi-skills get-operation <operationId> --api <apiName> --response --filter 0:10`
 - `openapi-skills generate-client-schema <operationId> --api <apiName>`
 
 ## Trigger Rules
@@ -71,6 +93,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 ### 6. NEVER read/write any file under `.openapi-skills` directly
 - Never read or write generated files under `.openapi-skills` directly.
 - Run `openapi-skills request <operationId> --api <apiName>` before `get-operation --request`, `--response`, or `--response-schema`.
+- If you use both `--get` and `--filter`, apply `--get` first and `--filter` second.
 - Use `generate-client-schema`, `describe`, `list`, `get-env`, and `get-api-names` instead of opening generated files.
 - If artifacts look stale, rerun `openapi-skills request <operationId> --api <apiName> --force`.
 - Avoid these filenames: request.json, response.json, bundled.json, components.json, endpoints.json, config.json.
@@ -105,8 +128,9 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 | "Make a request" / "Debug API" | Use `request` with `--validate`; patch only with a single-quoted JSON object using flattened dot-notation keys. |
 | "Set auth headers" | Use `set-env --api <apiName> --auth <json>`. |
 | "Parse a new spec" | Check existing APIs first; run `generate` only if needed. |
-| "Inspect a prepared request in multi-step flow" | Use `get-operation --request`. |
+| "Inspect a prepared request in multi-step flow" | Use `get-operation --request` or `get-operation-artifact --request`. |
 | "Patch and execute a step in multi-step flow" | Use `request --force --update-request` with a single-quoted JSON object using flattened dot-notation keys. |
+| "Make a live HTTP request scenario" / "Build a scenario with multiple steps" / "Chain requests into a scenario" | Use the "Prepare a Multi-Step Flow" workflow. Prepare all steps at once, inspect each request template, patch values from earlier responses, and feed outputs into the next request. |
 
 ## Initialization Sequence
 
@@ -144,7 +168,7 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 
 1. Read [references/write-client-code.md](references/write-client-code.md) first
 2. Get schema: `openapi-skills generate-client-schema <operationId> --api <apiName>`
-3. If the bundled schema changed but the cached `.openapi-skills/<api>/schemas/<operationId>.json` file is stale, rerun with `--force` to overwrite the cached schema first.
+3. If the bundled schema changed but the cached <operationId> artifact is stale, rerun with `--force` to overwrite the cached schema first.
 4. Write code using the output structure
 
 ### Debug a Request
@@ -158,7 +182,7 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 7. If you need to patch fields after restoring the original schema shape: `openapi-skills request <operationId> --api <apiName> --force --update-request '<json>'` and pass a single-quoted JSON object that uses flattened dot-notation keys. Invalid JSON fails fast.
 8. Try again: `openapi-skills request <operationId> --api <apiName> --validate`.
 
-**Never edit response.json directly** — adjust request.json parameters instead.
+**Never edit response.json directly**
 
 ### Prepare a Multi-Step Flow
 
@@ -168,9 +192,11 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 4. Inspect the response (from the request executed in step 3): `openapi-skills get-operation <operationId1> --response`
 5. Feed response values into the next step in the chain
 
+Use this workflow when a user asks for a live HTTP request scenario, an end-to-end request chain, or any multi-step flow where later requests depend on earlier responses.
+
 ### Update Request Template
 
-Use `request --force` to reset `request.json` to schema defaults. 
+Use `request --force` to reset the request artifact to schema defaults. 
 ```bash
 openapi-skills request <operationId> --api <apiName> --force
 ```
@@ -180,7 +206,7 @@ Use `request --force --update-request` to patch specific fields after restoring 
 openapi-skills request <operationId> --api <apiName> --force --update-request '{"user.name":"Ada","parameters.0.id":1}'
 ```
 
-Then inspect `request.json` to confirm changes are correct.
+Then inspect the request artifact to confirm changes are correct.
 
 ## Troubleshooting
 

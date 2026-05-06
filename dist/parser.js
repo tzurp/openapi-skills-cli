@@ -262,7 +262,6 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
             logger.error(`Error updating config.json: ${error instanceof Error ? error.message : String(error)}`);
             throw error;
         }
-        logger.info(`Parsing complete. Schemas and endpoints.json generated under ${apiDir}`);
     }
     catch (error) {
         logger.error(`Error during OpenAPI schema processing: ${error instanceof Error ? error.message : String(error)}`);

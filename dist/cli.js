@@ -6,7 +6,7 @@ import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationAr
 import { ensureConfig, updateConfig, listApis, getConfigValue, listEndpoints, deleteApi } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
 import {} from "./helper/json-updater.js";
-import { validateResponse, makeRequest } from "./validate-response.js";
+import { validateResponse, makeRequest, ensureResponseSchema } from "./validate-response.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
@@ -14,9 +14,12 @@ import { logger, emitJsonError, emitCommandError, logGeneratedPaths, toErrorMess
 import { filterEndpoints, filterResolvedEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
 import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
+import { getJsonOutputSize, MEDIUM_OUTPUT_MAX_BYTES } from "./helper/output-size.js";
 import { promptDeleteConfirmation } from "./helper/prompt-delete.js";
 import { resolveSelectedArtifact } from "./helper/request-artifacts.js";
 import { prepareMultiOperationRequests, getRequestResponseMetadata } from "./helper/request-preparation.js";
+import { filterArray, getByPath } from "./helper/dotNotation.js";
+import { parseGetOperationFilter } from "./helper/get-operation-filter.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 await checkForUpdateOncePerTerminalSession(pkg.version);
@@ -66,7 +69,7 @@ program
     logger.info(`Target install directory: ${installPath}`);
     try {
         const result = await installSkillBundle(srcDir, installPath);
-        logger.info(`Skill bundle installed: ${JSON.stringify(result)}`);
+        logger.info('openapi-skills skill bundle installed');
     }
     catch (err) {
         logger.error(`Failed to install skill bundle: ${err instanceof Error ? err.message : String(err)}`);
@@ -143,12 +146,6 @@ const generateCmd = program
             openapiSource,
             fileCount: 3,
         });
-        logGeneratedPaths([
-            `Generated files for ${apiName}:`,
-            `- ${path.join(outDir, "endpoints.json")}`,
-            `- ${path.join(outDir, "schemas")}`,
-            `- ${configPath}`,
-        ]);
         process.exitCode = 0;
     }
     catch (error) {
@@ -395,8 +392,8 @@ listCmd.agentMeta = {
 const genClientSchemaCmd = program
     .command("generate-client-schema <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
-    .option("--force", "Overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before generating metadata.")
-    .description("Return structured metadata for client code generation for a specific endpoint. Use --force to overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before reading it.")
+    .option("--force", "Overwrite the cached <operationId> artifact file before generating metadata.")
+    .description("Return structured metadata for client code generation for a specific endpoint. Use --force to overwrite the cached <operationId> artifact file before reading it.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     try {
@@ -418,11 +415,11 @@ genClientSchemaCmd.agentMeta = {
     name: "generate-client-schema",
     category: "Code Generation",
     usage: "openapi-skills generate-client-schema <operationId> --api <apiName> [--force]",
-    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Works for all endpoints. Returns `response: null` for endpoints with no JSON response body (e.g., DELETE operations) — generate `Promise<void>` as the return type in that case. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before generating output.",
+    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Works for all endpoints. Returns `response: null` for endpoints with no JSON response body (e.g., DELETE operations) — generate `Promise<void>` as the return type in that case. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before generating output.",
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the endpoint to inspect." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
-        { name: "force", type: "flag", required: false, flag: true, description: "Overwrite the cached schema file before generating metadata." }
+        { name: "force", type: "flag", required: false, flag: true, description: "Overwrite the cached artifact file before generating metadata." }
     ],
     examples: [
         "openapi-skills generate-client-schema addPet --api petstore",
@@ -447,8 +444,8 @@ genClientSchemaCmd.agentMeta = {
 const describeCmd = program
     .command("describe <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
-    .option("--force", "Overwrite the cached .openapi-skills/<api>/schemas/<operationId>.json file before printing the raw schema.")
-    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.")
+    .option("--force", "Overwrite the cached <operationId> artifact file before printing the raw schema.")
+    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     try {
@@ -476,7 +473,7 @@ describeCmd.agentMeta = {
     category: "Navigation",
     usage: "openapi-skills describe <operationId> --api <apiName> [--force]",
     description: [
-        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached .openapi-skills/<api>/schemas/<operationId>.json file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.",
+        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.",
         "",
         "**Agents MUST use `generate-client-schema` for client code generation. Use `describe` only as a fallback when you need full raw schema detail beyond what `generate-client-schema` provides, or when `generate-client-schema` is insufficient.**"
     ].join("\n"),
@@ -508,11 +505,14 @@ describeCmd.agentMeta = {
 };
 const getOperationCmd = program
     .command("get-operation <operationId>")
+    .alias("get-operation-artifact")
     .requiredOption("--api <apiName>", "API name to use")
-    .option("--request", "Return request.json for the operation.")
-    .option("--response", "Return response.json for the operation.")
-    .option("--response-schema", "Return response-schema.json for the operation.")
-    .description("Return one stored operation artifact as JSON. Run `request` first for the same operationId so the artifact exists. Exactly one of --request, --response, or --response-schema is required.")
+    .option("--request", "Return request artifact for the operation.")
+    .option("--response", "Return response artifact for the operation.")
+    .option("--response-schema", "Return response-schema artifact for the operation.")
+    .option("--get <path>", "Return the value at the given dot-notation path.")
+    .option("--filter <expr>", "Filter array artifacts using count, index, range, or <path>=<value> syntax (e.g. count, 0, 0:10, status=sold).")
+    .description("Return one stored operation artifact as JSON. Run `request` first for the same operationId so the artifact exists. Exactly one of --request, --response, or --response-schema is required. Use --get to narrow the selection first, then use --filter to filter array results returned by --get.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     const selection = resolveSelectedArtifact(options);
@@ -524,40 +524,188 @@ const getOperationCmd = program
     }
     const artifactPath = getOperationArtifactPath(apiName, sanitizedOperationId, selection.artifactName);
     if (!(await fs.pathExists(artifactPath))) {
-        logger.error(`Artifact not found: ${artifactPath}`);
-        process.exitCode = 1;
-        return;
+        logger.error(`Artifact not found: ${selection.artifactName}`);
+        if (selection.artifactName === "response-schema") {
+            logger.result({
+                kind: "no-response-schema",
+                apiName,
+                operationId,
+                error: "NoResponseSchema",
+                message: "No response schema artifact found for this operation. Make a request first to generate the artifact."
+            });
+            process.exitCode = 1;
+            return;
+        }
     }
     try {
-        const artifact = await fs.readJson(artifactPath);
-        logger.result(artifact);
+        let artifact = await fs.readJson(artifactPath);
+        const getPath = typeof options.get === "string" ? options.get : undefined;
+        const filterExpr = typeof options.filter === "string" ? options.filter : undefined;
+        const hasGet = typeof getPath === "string" && getPath.length > 0;
+        const hasFilter = typeof filterExpr === "string" && filterExpr.length > 0;
+        const selectedValue = hasGet ? getByPath(artifact, getPath) : artifact;
+        if (hasGet && !hasFilter) {
+            const { sizeBytes } = getJsonOutputSize(selectedValue);
+            if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
+                logger.result({
+                    kind: "oversized-output",
+                    apiName,
+                    artifactType: selection.artifactName,
+                    operation: "--get",
+                    sizeBytes,
+                    maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
+                    message: "Output is too large. Use --filter or --get to reduce output."
+                });
+            }
+            else {
+                logger.result(selectedValue);
+            }
+            return;
+        }
+        if (hasFilter) {
+            let artifactToFilter = selectedValue;
+            let arrayFields = [];
+            if (!Array.isArray(artifactToFilter) &&
+                artifactToFilter !== null &&
+                typeof artifactToFilter === "object") {
+                arrayFields = Object.values(artifactToFilter)
+                    .filter(v => Array.isArray(v));
+                if (arrayFields.length === 1) {
+                    artifactToFilter = arrayFields[0];
+                }
+            }
+            const parsedFilter = parseGetOperationFilter(filterExpr);
+            let result;
+            if (parsedFilter.kind === "count" || parsedFilter.kind === "index" || parsedFilter.kind === "range") {
+                if (!Array.isArray(artifactToFilter)) {
+                    if (arrayFields.length === 1) {
+                        artifactToFilter = arrayFields[0];
+                    }
+                    else {
+                        logger.error("--filter requires the target to be an array.");
+                        process.exitCode = 1;
+                        return;
+                    }
+                }
+                if (!Array.isArray(artifactToFilter)) {
+                    logger.error("--filter requires the target to be an array.");
+                    process.exitCode = 1;
+                    return;
+                }
+                if (parsedFilter.kind === "count") {
+                    result = artifactToFilter.length;
+                }
+                else if (parsedFilter.kind === "index") {
+                    const idx = parsedFilter.index < 0 ? artifactToFilter.length + parsedFilter.index : parsedFilter.index;
+                    result = artifactToFilter[idx];
+                }
+                else {
+                    result = artifactToFilter.slice(parsedFilter.start, parsedFilter.end);
+                }
+            }
+            else if (parsedFilter.kind === "path") {
+                const filterPath = parsedFilter.path;
+                const rawValue = parsedFilter.value;
+                let expectedValue = rawValue;
+                if (hasGet && !Array.isArray(artifactToFilter)) {
+                    logger.error("--filter requires the --get result to be an array.");
+                    process.exitCode = 1;
+                    return;
+                }
+                if (!Array.isArray(artifactToFilter)) {
+                    const { sizeBytes } = getJsonOutputSize(artifactToFilter);
+                    if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
+                        logger.result({
+                            kind: "oversized-output",
+                            apiName,
+                            artifactType: selection.artifactName,
+                            operation: "--filter",
+                            sizeBytes,
+                            maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
+                            message: "Output is too large. Use --filter or --get to reduce output."
+                        });
+                    }
+                    else {
+                        logger.result(artifactToFilter);
+                    }
+                    return;
+                }
+                result = filterArray(artifactToFilter, filterPath, expectedValue);
+            }
+            else {
+                logger.error("--filter must use count, index, range, or <path>=<value> syntax.");
+                process.exitCode = 1;
+                return;
+            }
+            const { sizeBytes } = getJsonOutputSize(result);
+            if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
+                logger.result({
+                    kind: "oversized-output",
+                    apiName,
+                    artifactType: selection.artifactName,
+                    operation: "--filter",
+                    sizeBytes,
+                    maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
+                    message: "Output is too large. Use --filter or --get to reduce output."
+                });
+            }
+            else {
+                logger.result(result);
+            }
+            return;
+        }
+        const { sizeBytes } = getJsonOutputSize(artifact);
+        if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
+            logger.result({
+                kind: "oversized-output",
+                apiName,
+                artifactType: selection.artifactName,
+                sizeBytes,
+                maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
+                message: "Output is too large. Use --filter or --get to reduce output."
+            });
+        }
+        else {
+            logger.result(artifact);
+        }
     }
     catch (error) {
-        logger.error(`Failed to read artifact ${artifactPath}: ${toErrorMessage(error)}`);
+        logger.error(`Failed to read artifact ${selection.artifactName}: ${toErrorMessage(error)}`);
         process.exitCode = 1;
     }
 });
 getOperationCmd.agentMeta = {
     name: "get-operation",
     category: "Navigation",
-    usage: "openapi-skills get-operation <operationId> --api <apiName> [--request] [--response] [--response-schema]",
-    description: "Return a stored operation artifact created by `openapi-skills request` as raw JSON. Run `request` for the same operationId first so the artifact exists. The first example shows that prerequisite request step. Exactly one selector flag is required.",
+    usage: "openapi-skills get-operation|get-operation-artifact <operationId> --api <apiName> [--request] [--response] [--response-schema] [--get <path>] [--filter count|<index>|<range>|<path>=<value>]",
+    description: "Return a stored operation artifact created by `openapi-skills request` as raw JSON. Run `request` for the same operationId first so the artifact exists. The first example shows that prerequisite request step. Use one selector flag, then optionally use --get to narrow the value and --filter to return an array count, item, slice, or path/value match. Exactly one of --request, --response, or --response-schema is required. New --filter modes only work when the selected target is an array. Alias: `get-operation-artifact`.",
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId whose stored artifact should be returned." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
-        { name: "request", type: "flag", required: false, flag: true, description: "Return request.json for the operation." },
-        { name: "response", type: "flag", required: false, flag: true, description: "Return response.json for the operation." },
-        { name: "response-schema", type: "flag", required: false, flag: true, description: "Return response-schema.json for the operation." }
+        { name: "request", type: "flag", required: false, flag: true, description: "Return request artifact for the operation." },
+        { name: "response", type: "flag", required: false, flag: true, description: "Return response artifact for the operation." },
+        { name: "response-schema", type: "flag", required: false, flag: true, description: "Return response-schema artifact for the operation." },
+        { name: "get", type: "string", required: false, flag: true, description: "Return the value at the given dot-notation path. Use get-operation --response-schema to inspect the response structure so your --get path is accurate." },
+        { name: "filter", type: "string", required: false, flag: true, description: "Filter array artifacts using count, index, range, or <path>=<value> syntax. Examples: --filter count, --filter 0, --filter 0:10, --filter status=sold. Use get-operation --response-schema to understand the response structure and ensure your filter path is correct." }
     ],
     examples: [
         "openapi-skills request getPetById --api petstore --force",
         "openapi-skills get-operation getPetById --api petstore --request",
+        "openapi-skills get-operation-artifact getPetById --api petstore --request",
         "openapi-skills get-operation getPetById --api petstore --response",
-        "openapi-skills get-operation getPetById --api petstore --response-schema"
+        "openapi-skills get-operation-artifact getPetById --api petstore --response",
+        "openapi-skills get-operation getPetById --api petstore --response-schema",
+        "openapi-skills get-operation-artifact getPetById --api petstore --response-schema",
+        "openapi-skills get-operation getPetById --api petstore --response --get name",
+        "openapi-skills get-operation getPetById --api petstore --response --filter id=5555",
+        "openapi-skills get-operation getPetById --api petstore --response --get body --filter id=555",
+        "openapi-skills get-operation getPetById --api petstore --response --filter count",
+        "openapi-skills get-operation getPetById --api petstore --response --filter 0",
+        "openapi-skills get-operation getPetById --api petstore --response --filter 0:10"
     ],
     returns: {
         type: "json",
-        description: "Returns the selected artifact as raw JSON."
+        description: "Returns the selected artifact as raw JSON, or a nested value / filtered array when --get or --filter is supplied. When both are used, --get runs first and --filter applies to the narrowed result. --filter can also return an array count, single item, or slice when the selected target is an array."
     },
     sideEffects: {
         writesFiles: false,
@@ -573,12 +721,12 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific endpoint, or prepare multiple request templates without executing requests. Supports: --validate (validate response), --force (regenerate request.json; use it when you want the original schema-shaped template), --update-request (patch request.json; only flattened object dot-notation keys are allowed), --header (add headers).")
+    .description("Make a live HTTP request for a specific endpoint, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate response), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact; only flattened object dot-notation keys are allowed), --header (add headers).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate the response against the schema.")
-    .option("--force", "Force overwrite request.json file with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
+    .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
     .option("--update-request <json>", [
-    "Update request.json before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
+    "Update request artifact before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
     "Nested JSON objects are supported (they will be flattened and issue a warning), but the top-level value must be a JSON object. Invalid JSON will cause the command to fail.",
     "Format (POSIX shells): --update-request '{\"field.path\":value,...}'",
     "Format (PowerShell): --update-request \"{\"field.path\":value,...}\"  (escape inner quotes as needed)",
@@ -664,15 +812,6 @@ const requestCmd = program
         try {
             const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates);
             const metadata = getRequestResponseMetadata(apiName, operationId);
-            const requestJsonPath = getOperationArtifactPath(apiName, operationId, "request");
-            const responseJsonPath = getOperationArtifactPath(apiName, operationId, "response");
-            const responseSchemaPath = getOperationArtifactPath(apiName, operationId, "response-schema");
-            logGeneratedPaths([
-                `Request artifacts for ${apiName} ${operationId}:`,
-                `- ${requestJsonPath}`,
-                `- ${responseJsonPath}`,
-                `- ${responseSchemaPath}`,
-            ]);
             logger.result({
                 kind: "validation-result",
                 apiName,
@@ -701,16 +840,8 @@ const requestCmd = program
     else {
         try {
             const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates);
+            await ensureResponseSchema(apiName, operationId);
             const metadata = getRequestResponseMetadata(apiName, operationId);
-            const requestJsonPath = getOperationArtifactPath(apiName, operationId, "request");
-            const responseJsonPath = getOperationArtifactPath(apiName, operationId, "response");
-            const responseSchemaPath = getOperationArtifactPath(apiName, operationId, "response-schema");
-            logGeneratedPaths([
-                `Request artifacts for ${apiName} ${operationId}:`,
-                `- ${requestJsonPath}`,
-                `- ${responseJsonPath}`,
-                `- ${responseSchemaPath}`,
-            ]);
             logger.result({
                 kind: "request-result",
                 apiName,
@@ -739,18 +870,18 @@ requestCmd.agentMeta = {
     category: "Validation",
     usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--header <json>]",
     description: [
-        "Make a live HTTP request for an endpoint, or prepare multiple request templates without executing requests.",
-        "When multiple operationIds are supplied, the command enters prepare-only mode and only refreshes request.json templates.",
+        "Make a live HTTP request for an endpoint, or prepare a multi-step request scenario without executing requests.",
+        "When multiple operationIds are supplied, the command enters prepare-only mode and only refreshes request artifact templates for the scenario.",
         "With --validate, validate the response against the schema.",
-        "With --force, regenerate request.json from schema defaults. Use it with --update-request when you want the original schema-shaped template before patching, and skip it if you want to keep previous request values.",
-        "With --update-request, patch request.json before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. Use --force when you want to restore defaults and patch in the same run."
+        "With --force, regenerate request artifact from schema defaults. Use it with --update-request when you want the original schema-shaped template before patching, and skip it if you want to keep previous request values.",
+        "With --update-request, patch request artifact before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. Use --force when you want to restore defaults and patch in the same run."
     ].join(" "),
     arguments: [
-        { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode." },
+        { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate the response against the schema." },
-        { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request.json with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
-        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request.json before making the request. Only flattened object dot-notation keys are allowed. Use with --force to rebuild defaults first." },
+        { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
+        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Use with --force to rebuild defaults first." },
         { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." }
     ],
     examples: [
@@ -775,7 +906,7 @@ requestCmd.agentMeta = {
         idempotent: false,
         requiresParsedApi: true
     },
-    filesWritten: ["request.json", "response.json", "response-schema.json"]
+    filesWritten: ["request artifact", "response artifact", "response-schema artifact (when response has JSON body)"]
 };
 const setEnvCmd = program
     .command("set-env")

@@ -50,6 +50,22 @@ function buildUpdateRequestWarning(requestJsonUpdates) {
         `Detected nested keys: ${nestedKeys.join(", ")}.`
     ].join(" ");
 }
+export async function ensureResponseSchema(apiName, operationId) {
+    const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+    const schemasDir = getSchemasDir(apiName);
+    const operationSchema = await loadJsonObject(path.resolve(schemasDir, `${sanitizedOperationId}.json`));
+    const responseDir = findRequestResponseDir(apiName, sanitizedOperationId);
+    const responseSchemaPath = path.join(responseDir, "response-schema.json");
+    if (await fs.pathExists(responseSchemaPath)) {
+        return await fs.readJson(responseSchemaPath);
+    }
+    const responseSchema = getDeterministicResponseBody(operationSchema);
+    if (responseSchema !== undefined) {
+        await fs.ensureDir(responseDir);
+        await fs.writeJson(responseSchemaPath, responseSchema, { spaces: 2 });
+    }
+    return responseSchema;
+}
 export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates) {
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     const operationSchema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
@@ -66,7 +82,13 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
         if (updateWarning) {
             warnings.push(updateWarning);
         }
-        await updateJsonFile(requestJsonPath, requestJsonUpdates);
+        const flattened = flattenToDotNotation(requestJsonUpdates);
+        const mergedUpdates = { ...flattened };
+        for (const [k, v] of Object.entries(requestJsonUpdates)) {
+            if (!(k in mergedUpdates))
+                mergedUpdates[k] = v;
+        }
+        await updateJsonFile(requestJsonPath, mergedUpdates);
         requestJson = await fs.readJson(requestJsonPath);
     }
     const requestContext = buildRequestContext(apiName, operationSchema, requestJson, config, responseJsonPath, cliHeaders, warnings);
@@ -116,16 +138,8 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
 }
 export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates) {
     const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates);
-    const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
-    const opDir = getSchemasDir(apiName);
-    const operationSchema = await loadJsonObject(path.resolve(opDir, `${sanitizedOperationId}.json`));
-    const responseSchema = getDeterministicResponseBody(operationSchema);
-    const responseSchemaPath = path.join(findRequestResponseDir(apiName, sanitizedOperationId), "response-schema.json");
-    await fs.ensureDir(opDir);
-    if (responseSchema !== undefined) {
-        await fs.writeJson(responseSchemaPath, responseSchema, { spaces: 2 });
-    }
     const safeWarnings = warnings ?? [];
+    const responseSchema = await ensureResponseSchema(apiName, operationId);
     if (responseSchema === undefined) {
         return { valid: true, warnings: safeWarnings };
     }

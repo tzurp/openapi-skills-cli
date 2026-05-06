@@ -12,6 +12,7 @@ type MakeRequestResult = {
     response: any;
     warnings?: string[];
 };
+export declare function ensureResponseSchema(apiName: string, operationId: string): Promise<any>;
 export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates): Promise<MakeRequestResult>;
 export declare function validateResponse(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates): Promise<{
     valid: boolean;
