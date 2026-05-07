@@ -39,5 +39,11 @@ export declare function deleteApi(apiName: string): Promise<DeleteApiResult>;
 export declare function getConfigValue(apiName: string, key: ConfigField): Promise<string | Record<string, string> | [string, string][] | undefined>;
 export declare function listEndpoints(apiName: string): Promise<Array<Record<string, any>>>;
 export declare function listApis(): Promise<string[]>;
+export type ApiNotFoundResult = {
+    kind: "api-not-found";
+    apiName: string;
+    message: string;
+};
+export declare function getApiNotFoundResult(apiName: string): Promise<ApiNotFoundResult | null>;
 export {};
 //# sourceMappingURL=index.d.ts.map

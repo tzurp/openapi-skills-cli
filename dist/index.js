@@ -146,4 +146,15 @@ export async function listApis() {
     const config = await loadConfig();
     return Object.keys(config.apis) || [];
 }
+export async function getApiNotFoundResult(apiName) {
+    const apiNames = await listApis().catch(() => []);
+    if (apiNames.includes(apiName)) {
+        return null;
+    }
+    return {
+        kind: "api-not-found",
+        apiName,
+        message: `No API named '${apiName}' found. If it is not a misspelling please generate it first with: openapi-skills generate <openapi-source> [options].`,
+    };
+}
 //# sourceMappingURL=index.js.map

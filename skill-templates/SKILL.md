@@ -29,13 +29,12 @@ These files are NOT part of openapi-skills.
 If the IDE prints a message like “Large tool result written to file…”, you must ignore it completely.
 
 2. Are you about to use `get-operation --request`, `--response`, or `--response-schema`?
-   - If the Output is too large, you MUST run `get-operation` with `--filter` or `--get` flags, to narrow down the results.
+  - If the Output is too large, you MUST run `get-operation` with `--filter` or `--get` flags, to narrow down the results.
   - You can combine them: use `--get` first to narrow the value, then `--filter` to filter the resulting array.
   - Use `get-operation --response-schema` to inspect the response structure and ensure accurate paths for `--get` and `--filter` on a response artifact.
   - `--filter` also supports array-section utilities: `count`, a zero-based index like `0`, and ranges like `0:10`, `:10`, or `10:`. These only work on array sections; keep using `--filter <path>=<value>` for field matching items.
-   - For too large output, NEVER try to read the entire request directly or by copying the full output, using bash redirection, or any external tool. Always use `--filter` or `--get` to retrieve only the specific fields you need.
-   - You MUST run `openapi-skills request <operationId> --api <apiName> --validate` at least once first.
-   - That command generates the artifacts that `get-operation` reads.
+  - For too large output, NEVER try to read the entire request directly or by copying the full output, using bash redirection, or any external tool. Always use `--filter` or `--get` to retrieve only the specific fields you need.
+  - You MUST run `openapi-skills request <operationId> [options]` at least once first to generates the artifacts that `get-operation` reads.
 
 3. Are you generating tests, client code, or helpers?
    - Read the required reference document first.
@@ -106,6 +105,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Only patch fields that already exist in the template.
 - Use `--update-request` with a single-quoted JSON object whose keys use flattened dot-notation. Invalid JSON fails fast.
   - Example keys: `parameters.0.value`, `body.petId`
+- You can combine `--force` and `--update-request` in the same command to rebuild the request template and patch it before sending.
 - Do not guess field names or add new top-level keys unless the template already contains them.
 - For multi-step flows, always inspect the request template before using values from a previous response.
 - If the template shape is unclear, stop and inspect it again rather than sending an ad-hoc request.
@@ -125,7 +125,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 | "Generate endpoint tests" | Read `references/create-endpoint-test.md`, then use `generate-client-schema`. |
 | "Generate client code" | Read `references/write-client-code.md`, then use `generate-client-schema`. |
 | "Show endpoint details" | Use `generate-client-schema` first; use `describe` only if needed. |
-| "Make a request" / "Debug API" | Use `request` with `--validate`; patch only with a single-quoted JSON object using flattened dot-notation keys. |
+| "Make a request" / "Debug API" | Use `request` with `--validate` to validate only the response against the schema; patch only with a single-quoted JSON object using flattened dot-notation keys. |
 | "Set auth headers" | Use `set-env --api <apiName> --auth <json>`. |
 | "Parse a new spec" | Check existing APIs first; run `generate` only if needed. |
 | "Inspect a prepared request in multi-step flow" | Use `get-operation --request` or `get-operation-artifact --request`. |
@@ -173,7 +173,7 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 
 ### Debug a Request
 
-1. Validate: `openapi-skills request <operationId> --api <apiName> --validate`
+1. Validate response: `openapi-skills request <operationId> --api <apiName> --validate`
 2. Read validation output; it shows exact mismatches
 3. MUST run `openapi-skills request <operationId> --api <apiName> --force` first to create the exact request schema artifact.
 4. MUST retrieve the generated request schema artifact (created in step 3) with `openapi-skills get-operation <operationId> --api <apiName> --request`.
@@ -216,7 +216,7 @@ Then inspect the request artifact to confirm changes are correct.
 | `get-api-names` returns 0 APIs | Parse a spec with `generate`. |
 | `list` returns empty `[]` | Broaden or change the filters, or use `--count`. |
 | Large API takes forever to list | Add `--method`, `--path`, `--filter`, `--index` or `--resolved`. |
-| request fails | Adjust values using `request --force --update-request` with a single-quoted JSON object containing flattened dot-notation keys. |
+| request fails | Adjust values using `request --force --update-request` with a single-quoted JSON object containing flattened dot-notation keys. `--validate` only checks the response after the request is sent. |
 | "required property X missing" | Rebuild the request template with `--force`, then patch it. |
 | "Invalid type: expected integer, got string" | Use the correct JSON value type in `--update-request`. |
 | "404 Not Found" | Check the base URL and whether the resource exists. |

@@ -8,6 +8,7 @@ import { loadJsonObject, updateJsonFile } from "./helper/json-updater.js";
 import { loadConfig } from "./index.js";
 import getSanitizedOperationId from "./helper/endpoint-utils.js";
 import { getParameterDefaultValue } from "./helper/parameter-schema.js";
+import { getByPath } from "./helper/dotNotation.js";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -50,6 +51,41 @@ function buildUpdateRequestWarning(requestJsonUpdates) {
         `Detected nested keys: ${nestedKeys.join(", ")}.`
     ].join(" ");
 }
+function describeValueType(value) {
+    if (value === null) {
+        return "null";
+    }
+    if (Array.isArray(value)) {
+        return "array";
+    }
+    return typeof value;
+}
+function matchesExpectedTemplateValue(expectedValue, actualValue) {
+    if (expectedValue === null) {
+        return actualValue === null;
+    }
+    if (Array.isArray(expectedValue)) {
+        return Array.isArray(actualValue);
+    }
+    if (typeof expectedValue === "object") {
+        return !!actualValue && typeof actualValue === "object" && !Array.isArray(actualValue);
+    }
+    return typeof actualValue === typeof expectedValue;
+}
+export function collectRequestUpdateTypeWarnings(requestJson, requestJsonUpdates) {
+    const flattenedUpdates = flattenToDotNotation(requestJsonUpdates);
+    const warnings = [];
+    for (const [updatePath, updateValue] of Object.entries(flattenedUpdates)) {
+        const expectedValue = getByPath(requestJson, updatePath);
+        if (expectedValue === undefined) {
+            continue;
+        }
+        if (!matchesExpectedTemplateValue(expectedValue, updateValue)) {
+            warnings.push(`--update-request type mismatch at ${updatePath}: expected ${describeValueType(expectedValue)}, received ${describeValueType(updateValue)}.`);
+        }
+    }
+    return warnings;
+}
 export async function ensureResponseSchema(apiName, operationId) {
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     const schemasDir = getSchemasDir(apiName);
@@ -66,7 +102,7 @@ export async function ensureResponseSchema(apiName, operationId) {
     }
     return responseSchema;
 }
-export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates) {
+export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     const operationSchema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
     const config = await loadConfig();
@@ -77,6 +113,9 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     let requestJson = initialRequestJson;
     const warnings = [];
+    if (requestJsonWarnings && requestJsonWarnings.length > 0) {
+        warnings.push(...requestJsonWarnings);
+    }
     if (requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) {
         const updateWarning = buildUpdateRequestWarning(requestJsonUpdates);
         if (updateWarning) {
@@ -136,11 +175,12 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
     const responseJson = await fs.readJson(requestContext.responseJsonPath);
     return { request: requestJson, response: responseJson, warnings: requestContext.warnings };
 }
-export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates) {
-    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates);
+export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
+    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
     const safeWarnings = warnings ?? [];
     const responseSchema = await ensureResponseSchema(apiName, operationId);
-    if (responseSchema === undefined) {
+    if (responseSchema === undefined || Object.keys(responseSchema).length === 0) {
+        warnings.push("No response schema found for this operation. Skipping validation.");
         return { valid: true, warnings: safeWarnings };
     }
     if (!response) {

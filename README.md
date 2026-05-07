@@ -170,11 +170,11 @@ I need the full raw schema for the <operationId> endpoint.
 ## 6. Validating a Live Request
 
 ```
-Make a request to <operationId> and validate it.
+Make a request to <operationId> and validate the response against the schema.
 ```
 
 ```
-Update the request template for <operationId> with this data and then validate it:
+Update the request template for <operationId> with this data and then validate the response against the schema:
 { ... }
 ```
 
@@ -334,7 +334,7 @@ Make a live HTTP request for an endpoint. When you pass multiple operationIds, t
 
 Supports:
 
-- `--validate` (validate response, suppresses request/response output)
+- `--validate` (validate only the response against the schema after the request is sent; it does not validate the request body or guarantee a response exists, and it suppresses request/response output)
 - `--force` (regenerate request.json; use before `--update-request` when you want the original schema-shaped template)
 - `--update-request` (patch request.json; pass a JSON string of flattened dot-notation keys — single-quote in POSIX shells). Invalid JSON will cause the command to fail.
 - `--header` (add headers)
@@ -351,6 +351,8 @@ Live request validation:
 ```bash
 openapi-skills request <operationId> --api <apiName> --validate
 ```
+
+`--validate` checks only the response that comes back from the request. It does not block malformed request bodies before sending, and it does not guarantee that a response exists.
 
 Batch template preparation:
 
