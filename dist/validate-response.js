@@ -4,11 +4,13 @@ import path from "path";
 import { getSchemaPath, getSchemasDir, findRequestResponseDir } from "./helper/paths.js";
 import Ajv from "ajv";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
-import { loadJsonObject, updateJsonFile } from "./helper/json-updater.js";
+import { DELETE_SENTINEL, loadJsonObject, updateJsonFile } from "./helper/json-updater.js";
 import { loadConfig } from "./index.js";
 import getSanitizedOperationId from "./helper/endpoint-utils.js";
 import { getParameterDefaultValue } from "./helper/parameter-schema.js";
 import { getByPath } from "./helper/dotNotation.js";
+import { buildGraphQLArtifact, extractGraphQLEndpoints, findGraphQLEndpoint } from "./helper/graphql.js";
+import { getEndpointsPath } from "./helper/paths.js";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -72,10 +74,91 @@ function matchesExpectedTemplateValue(expectedValue, actualValue) {
     }
     return typeof actualValue === typeof expectedValue;
 }
+function isGraphQLRequestJson(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+        && typeof value.query === "string"
+        && typeof value.variables === "object"
+        && !Array.isArray(value.variables);
+}
+function buildGraphQLVariables(args) {
+    const variables = {};
+    for (const [name, arg] of Object.entries(args)) {
+        const normalized = arg.type.trim();
+        const baseType = normalized.endsWith("!") ? normalized.slice(0, -1).trim() : normalized;
+        if (baseType.startsWith("[") && baseType.endsWith("]")) {
+            variables[name] = [];
+        }
+        else if (baseType === "Boolean") {
+            variables[name] = false;
+        }
+        else if (baseType === "Int" || baseType === "Float") {
+            variables[name] = 0;
+        }
+        else {
+            variables[name] = "";
+        }
+    }
+    return variables;
+}
+export async function getSchemaType(apiName) {
+    const config = await loadConfig();
+    const configuredSchemaType = config.apis?.[apiName]?.schemaType;
+    if (configuredSchemaType === "graphql") {
+        return "graphql";
+    }
+    if (configuredSchemaType === "openapi") {
+        return "openapi";
+    }
+    try {
+        const endpoints = await fs.readJson(getEndpointsPath(apiName));
+        if (Array.isArray(endpoints) && endpoints.some((endpoint) => typeof endpoint?.rootType === "string")) {
+            return "graphql";
+        }
+    }
+    catch {
+    }
+    return "openapi";
+}
+async function readGraphQLBundledSource(apiName) {
+    const bundledPath = path.join(path.dirname(getSchemasDir(apiName)), "bundled.json");
+    const bundled = await fs.readJson(bundledPath);
+    const sourceText = typeof bundled?.source === "string" ? bundled.source : typeof bundled?.sourceText === "string" ? bundled.sourceText : undefined;
+    if (!sourceText) {
+        throw new Error(`GraphQL source not found for API '${apiName}'. Run generate first.`);
+    }
+    return sourceText;
+}
+async function ensureGraphQLOperationSchema(apiName, operationId, force = false) {
+    const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+    const schemaPath = getSchemaPath(apiName, sanitizedOperationId);
+    if (!force && await fs.pathExists(schemaPath)) {
+        return await fs.readJson(schemaPath);
+    }
+    const endpoints = await fs.readJson(getEndpointsPath(apiName));
+    const endpoint = endpoints.find((entry) => entry.operationId === operationId || entry.name === operationId);
+    if (!endpoint) {
+        throw new Error(`Endpoint '${operationId}' not found in GraphQL endpoint list.`);
+    }
+    const sourceText = await readGraphQLBundledSource(apiName);
+    const rootType = typeof endpoint.rootType === "string" ? endpoint.rootType : typeof endpoint.method === "string" ? endpoint.method : undefined;
+    if (!rootType || (rootType !== "query" && rootType !== "mutation" && rootType !== "subscription")) {
+        throw new Error(`Invalid GraphQL endpoint metadata for '${operationId}'.`);
+    }
+    const schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+    await fs.ensureDir(path.dirname(schemaPath));
+    await fs.writeJson(schemaPath, schema, { spaces: 2 });
+    return schema;
+}
+async function getOperationSchemaType(apiName) {
+    return await getSchemaType(apiName);
+}
 export function collectRequestUpdateTypeWarnings(requestJson, requestJsonUpdates) {
     const flattenedUpdates = flattenToDotNotation(requestJsonUpdates);
     const warnings = [];
     for (const [updatePath, updateValue] of Object.entries(flattenedUpdates)) {
+        if (updateValue === DELETE_SENTINEL) {
+            continue;
+        }
         const expectedValue = getByPath(requestJson, updatePath);
         if (expectedValue === undefined) {
             continue;
@@ -87,6 +170,17 @@ export function collectRequestUpdateTypeWarnings(requestJson, requestJsonUpdates
     return warnings;
 }
 export async function ensureResponseSchema(apiName, operationId) {
+    if (await getOperationSchemaType(apiName) === "graphql") {
+        const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+        const responseSchemaPath = path.join(findRequestResponseDir(apiName, sanitizedOperationId), "response-schema.json");
+        if (await fs.pathExists(responseSchemaPath)) {
+            return await fs.readJson(responseSchemaPath);
+        }
+        const operationSchema = await ensureGraphQLOperationSchema(apiName, operationId, false);
+        await fs.ensureDir(path.dirname(responseSchemaPath));
+        await fs.writeJson(responseSchemaPath, operationSchema, { spaces: 2 });
+        return operationSchema;
+    }
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     const schemasDir = getSchemasDir(apiName);
     const operationSchema = await loadJsonObject(path.resolve(schemasDir, `${sanitizedOperationId}.json`));
@@ -103,12 +197,78 @@ export async function ensureResponseSchema(apiName, operationId) {
     return responseSchema;
 }
 export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
-    const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
-    const operationSchema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
+    const clientSchema = await buildClientCodeSchema(apiName, operationId, await getSanitizedOperationId(apiName, operationId), force);
     const config = await loadConfig();
     const baseUrl = config.apis?.[apiName]?.baseUrl;
     if (!baseUrl)
         throw new Error("Base URL not found in config");
+    if (clientSchema.schemaType === "graphql") {
+        const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+        const gqlOperationSchema = await ensureGraphQLOperationSchema(apiName, operationId, force);
+        const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateGraphQLRequestJson(apiName, sanitizedOperationId, force, gqlOperationSchema);
+        const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
+        let requestJson = initialRequestJson;
+        const warnings = [];
+        if (requestJsonWarnings && requestJsonWarnings.length > 0) {
+            warnings.push(...requestJsonWarnings);
+        }
+        if (requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) {
+            const flattened = flattenToDotNotation(requestJsonUpdates);
+            const mergedUpdates = { ...flattened };
+            for (const [k, v] of Object.entries(requestJsonUpdates)) {
+                if (!(k in mergedUpdates))
+                    mergedUpdates[k] = v;
+            }
+            await updateJsonFile(requestJsonPath, mergedUpdates, 2, { deleteSentinel: DELETE_SENTINEL });
+            requestJson = await fs.readJson(requestJsonPath);
+        }
+        const requestVariables = {
+            ...buildGraphQLVariables(clientSchema.args),
+            ...(isGraphQLRequestJson(requestJson) ? requestJson.variables : {}),
+        };
+        const requestBody = {
+            query: clientSchema.query,
+            variables: requestVariables,
+        };
+        const requestContext = {
+            headers: { "Content-Type": "application/json" },
+            url: "",
+            warnings,
+            responseJsonPath,
+        };
+        const httpClient = new FetchClient(baseUrl);
+        let liveResponse;
+        try {
+            liveResponse = await httpClient.post(baseUrl, {
+                headers: requestContext.headers,
+                body: requestBody,
+            });
+            if (liveResponse && typeof liveResponse === "object" && "status" in liveResponse) {
+                const status = liveResponse.status;
+                if (typeof status === "number" && (status < 200 || status >= 300)) {
+                    requestContext.warnings.push(`⚠️  The live HTTP request failed for ${baseUrl}: HTTP ${status}${"statusText" in liveResponse && typeof liveResponse.statusText === "string" && liveResponse.statusText ? ` ${liveResponse.statusText}` : ""}`);
+                }
+            }
+            if (liveResponse && typeof liveResponse === "object" && Array.isArray(liveResponse.errors) && liveResponse.errors?.length) {
+                requestContext.warnings.push("⚠️  GraphQL response contains errors.");
+            }
+            await fs.writeJson(requestContext.responseJsonPath, liveResponse, { spaces: 2 });
+        }
+        catch (err) {
+            requestContext.warnings.push(`⚠️  The live HTTP request failed for ${baseUrl}: ${err instanceof Error ? err.message : String(err)}`);
+            if (!(await fs.pathExists(requestContext.responseJsonPath))) {
+                requestContext.warnings.push(`response.json not found at ${requestContext.responseJsonPath}`);
+                return { request: requestBody, response: undefined, warnings: requestContext.warnings };
+            }
+        }
+        const responseJson = await fs.readJson(requestContext.responseJsonPath);
+        return { request: requestBody, response: responseJson?.data?.[clientSchema.fieldName], warnings: requestContext.warnings };
+    }
+    const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+    const restSchema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
+    if (restSchema.schemaType !== "rest") {
+        throw new Error(`Invalid REST endpoint metadata for '${operationId}'.`);
+    }
     const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force);
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     let requestJson = initialRequestJson;
@@ -127,12 +287,15 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
             if (!(k in mergedUpdates))
                 mergedUpdates[k] = v;
         }
-        await updateJsonFile(requestJsonPath, mergedUpdates);
+        await updateJsonFile(requestJsonPath, mergedUpdates, 2, { deleteSentinel: DELETE_SENTINEL });
         requestJson = await fs.readJson(requestJsonPath);
     }
-    const requestContext = buildRequestContext(apiName, operationSchema, requestJson, config, responseJsonPath, cliHeaders, warnings);
+    const requestContext = buildRequestContext(apiName, restSchema, requestJson, config, responseJsonPath, cliHeaders, warnings);
     const httpClient = new FetchClient(baseUrl);
-    const method = operationSchema.method.toLowerCase();
+    if (!restSchema.method || !restSchema.path) {
+        throw new Error(`Invalid OpenAPI endpoint metadata for '${operationId}'.`);
+    }
+    const method = restSchema.method.toLowerCase();
     let liveResponse;
     try {
         switch (method) {
@@ -155,7 +318,7 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
                 liveResponse = await httpClient.delete(requestContext.url, { headers: requestContext.headers });
                 break;
             default:
-                throw new Error(`Unsupported HTTP method: ${operationSchema.method}`);
+                throw new Error(`Unsupported HTTP method: ${restSchema.method}`);
         }
         if (liveResponse && typeof liveResponse === "object" && "status" in liveResponse) {
             const status = liveResponse.status;
@@ -178,6 +341,16 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
 export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
     const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
     const safeWarnings = warnings ?? [];
+    if (await getOperationSchemaType(apiName) === "graphql") {
+        if (!response || typeof response !== "object") {
+            return { valid: false, warnings: safeWarnings, errors: ["response.body missing or invalid"] };
+        }
+        const responseObject = response;
+        if (Array.isArray(responseObject.errors) && responseObject.errors.length > 0) {
+            return { valid: false, warnings: safeWarnings, errors: ["GraphQL response contains errors"] };
+        }
+        return { valid: true, warnings: safeWarnings };
+    }
     const responseSchema = await ensureResponseSchema(apiName, operationId);
     if (responseSchema === undefined || Object.keys(responseSchema).length === 0) {
         warnings.push("No response schema found for this operation. Skipping validation.");
@@ -207,6 +380,19 @@ export async function validateResponse(apiName, operationId, force = false, cliH
     }
 }
 export async function prepareRequestTemplate(apiName, sanitizedOperationId, force = false) {
+    if (await getOperationSchemaType(apiName) === "graphql") {
+        const operationSchema = await ensureGraphQLOperationSchema(apiName, sanitizedOperationId, force);
+        const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
+        const responseJsonPath = path.join(findRequestResponseDir(apiName, sanitizedOperationId), "response.json");
+        const requestJson = buildGraphQLArtifact(operationSchema);
+        await fs.ensureDir(path.dirname(requestJsonPath));
+        await fs.writeJson(requestJsonPath, requestJson, { spaces: 2 });
+        return {
+            requestJsonPath,
+            responseJsonPath,
+            requestJson,
+        };
+    }
     const { requestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force);
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     return {
@@ -231,6 +417,31 @@ async function getOrCreateRequestJson(apiName, sanitizedOperationId, force) {
     };
     if (await shouldRegenerate()) {
         const template = buildDeterministicRequestTemplate(fullSchema);
+        await fs.writeJson(requestJsonPath, template, { spaces: 2 });
+        return {
+            requestJson: template,
+            responseJsonPath,
+        };
+    }
+    return {
+        requestJson: await fs.readJson(requestJsonPath),
+        responseJsonPath,
+    };
+}
+async function getOrCreateGraphQLRequestJson(apiName, sanitizedOperationId, force, operationSchema) {
+    const opDir = path.join(getSchemasDir(apiName), sanitizedOperationId);
+    await fs.ensureDir(opDir);
+    const requestJsonPath = path.join(opDir, "request.json");
+    const responseJsonPath = path.join(opDir, "response.json");
+    const shouldRegenerate = async () => {
+        if (force || !(await fs.pathExists(requestJsonPath))) {
+            return true;
+        }
+        const existingRequestJson = await fs.readJson(requestJsonPath);
+        return !isGraphQLRequestJson(existingRequestJson);
+    };
+    if (await shouldRegenerate()) {
+        const template = buildGraphQLArtifact(operationSchema);
         await fs.writeJson(requestJsonPath, template, { spaces: 2 });
         return {
             requestJson: template,
@@ -267,6 +478,9 @@ function buildRequestContext(apiName, operationSchema, requestJson, config, resp
             queryParams[param.name] = param.value;
         else if (param.in === "header")
             headers[param.name] = String(param.value);
+    }
+    if (!operationSchema.path) {
+        throw new Error(`Invalid OpenAPI endpoint metadata for '${operationSchema.operationId}'.`);
     }
     const urlPath = substitutePathParams(operationSchema.path, pathParams);
     const queryString = buildQueryString(queryParams);

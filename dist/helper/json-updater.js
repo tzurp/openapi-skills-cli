@@ -2,6 +2,7 @@ import { promises as fsp } from "fs";
 import path from "path";
 import { logger } from "./logger.js";
 import fs from 'fs-extra';
+export const DELETE_SENTINEL = "__delete__";
 export async function loadJsonObject(filePath) {
     try {
         const content = await fs.readJSON(filePath, "utf8");
@@ -51,7 +52,60 @@ function setDeep(obj, key, value) {
         }
     }
 }
-export async function updateJsonFile(filePath, updates, space = 2) {
+function deleteDeep(obj, key) {
+    const parts = key.split(".");
+    if (parts.length === 0) {
+        return false;
+    }
+    let curr = obj;
+    for (let index = 0; index < parts.length - 1; index++) {
+        const part = parts[index] ?? "";
+        const isIndex = /^[0-9]+$/.test(part);
+        const nextValue = isIndex && Array.isArray(curr)
+            ? curr[Number(part)]
+            : curr && typeof curr === "object"
+                ? curr[part]
+                : undefined;
+        if (nextValue === undefined || nextValue === null) {
+            return false;
+        }
+        curr = nextValue;
+    }
+    const lastPart = parts[parts.length - 1] ?? "";
+    const lastIsIndex = /^[0-9]+$/.test(lastPart);
+    if (Array.isArray(curr) && lastIsIndex) {
+        const lastIndex = Number(lastPart);
+        if (lastIndex < 0 || lastIndex >= curr.length) {
+            return false;
+        }
+        curr.splice(lastIndex, 1);
+        return true;
+    }
+    if (curr && typeof curr === "object" && Object.prototype.hasOwnProperty.call(curr, lastPart)) {
+        delete curr[lastPart];
+        return true;
+    }
+    return false;
+}
+function isDescendantPath(candidate, ancestor) {
+    return candidate === ancestor || candidate.startsWith(`${ancestor}.`);
+}
+function compareDeletePaths(left, right) {
+    const leftParts = left.split(".");
+    const rightParts = right.split(".");
+    if (leftParts.length !== rightParts.length) {
+        return rightParts.length - leftParts.length;
+    }
+    const leftLast = leftParts[leftParts.length - 1] ?? "";
+    const rightLast = rightParts[rightParts.length - 1] ?? "";
+    const leftParent = leftParts.slice(0, -1).join(".");
+    const rightParent = rightParts.slice(0, -1).join(".");
+    if (leftParent === rightParent && /^[0-9]+$/.test(leftLast) && /^[0-9]+$/.test(rightLast)) {
+        return Number(rightLast) - Number(leftLast);
+    }
+    return right.localeCompare(left);
+}
+export async function updateJsonFile(filePath, updates, space = 2, options = {}) {
     let before = {};
     try {
         const content = await fsp.readFile(filePath, "utf8");
@@ -62,7 +116,23 @@ export async function updateJsonFile(filePath, updates, space = 2) {
             throw err;
     }
     const after = JSON.parse(JSON.stringify(before));
+    const deleteSentinel = options.deleteSentinel;
+    const deletePaths = deleteSentinel === undefined
+        ? []
+        : Object.entries(updates)
+            .filter(([, value]) => value === deleteSentinel)
+            .map(([key]) => key)
+            .sort(compareDeletePaths);
+    for (const deletePath of deletePaths) {
+        deleteDeep(after, deletePath);
+    }
     for (const [k, v] of Object.entries(updates)) {
+        if (deleteSentinel !== undefined && v === deleteSentinel) {
+            continue;
+        }
+        if (deletePaths.some(deletePath => isDescendantPath(k, deletePath))) {
+            continue;
+        }
         setDeep(after, k, v);
     }
     const changed = JSON.stringify(before) !== JSON.stringify(after);

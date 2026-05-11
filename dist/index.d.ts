@@ -2,6 +2,7 @@ type ConfigField = "version" | "baseUrl" | "authHeaders" | "vars";
 type UpdateConfigOptions = {
     version?: string;
     openapiSource?: string;
+    schemaType?: "openapi" | "graphql";
     baseUrl?: string;
     auth?: Record<string, string>;
     vars?: Record<string, string>;
@@ -23,6 +24,7 @@ export type DeleteApiResult = {
 export interface ApiConfig {
     version?: string;
     openapiSource?: string;
+    schemaType?: "openapi" | "graphql";
     baseUrl?: string;
     auth?: {
         headers?: Record<string, string>;

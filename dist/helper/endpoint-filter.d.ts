@@ -3,6 +3,7 @@ export declare function filterEndpoints(endpoints: Array<Record<string, any>>, o
     path?: string | string[];
     filter?: string;
     method?: string;
+    rootType?: string;
     operationId?: string;
 }): Array<Record<string, any>>;
 export declare function filterResolvedEndpoints(apiName: string, endpoints: Array<Record<string, any>>): Promise<Array<Record<string, any>>>;

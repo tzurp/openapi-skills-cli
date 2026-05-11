@@ -1,11 +1,11 @@
 # openapi-skills
-OpenAPI CLI with SKILLS
+API CLI with SKILLS
 <p align="center">
 <img src="https://raw.githubusercontent.com/tzurp/images/refs/heads/main/openapi-skills.png">
 </p>
 
-Command‑line tools for exploring, validating, and generating artifacts from OpenAPI/Swagger specifications.  
-Includes a built‑in, schema‑agnostic skill bundle that teaches AI agents how to operate the CLI.
+Command‑line tools for exploring, validating, and generating artifacts from OpenAPI/Swagger and GraphQL specifications.  
+Includes a built‑in, schema‑agnostic skill bundle that teaches AI agents how to operate the CLI and write API tests and client code.
 
 ---
 
@@ -13,7 +13,7 @@ Includes a built‑in, schema‑agnostic skill bundle that teaches AI agents how
 
 - Explore and inspect OpenAPI 2.0/3.x schemas  
 - Parse specs into structured artifacts (`endpoints.json`, `schemas/`)  
-- List endpoints, filter by method, structured path matching, or keywords  
+- List endpoints, filter by OpenAPI method or GraphQL root type, structured path matching, or keywords  
 - Describe endpoints with full raw schema detail  
 - Retrieve stored operation artifacts (`request.json`, `response.json`, `response-schema.json`)  
 - Validate live API requests and responses against the OpenAPI contract  
@@ -272,17 +272,19 @@ openapi-skills generate --validate ./openapi.yaml
 ### list
 List summarized endpoint objects for a parsed API as JSON.
 
-At least one filter input is required to list endpoints. The command accepts `--path`, `--filter`, `--method`, or `--index` as filter inputs.
+At least one filter input is required to list endpoints. The command accepts `--path`, `--filter`, `--method`, `--root-type`, or `--index` as filter inputs.
 
 Supports:
 
 - `--count` (returns the filtered/sliced endpoint count; with no filters, returns the total count)
 - `--path` (prefix, `:param`, or segment matching)
 - `--filter`
-- `--method`
+- `--method` for OpenAPI endpoints
+- `--root-type` for GraphQL root types (`query`, `mutation`, or `subscription`)
 - `--index`
 
 If you intentionally want the entire list, use `--index : `.
+`--method` and `--path` are used only with OpenAPI requests, and `--root-type` is used only with GraphQL requests. Each flag is optional, but none of them can be used outside their respective API types.
 
 ---
 
@@ -407,6 +409,8 @@ List all parsed APIs in the project.
 
 ### help
 Show the CLI help overview.
+
+Use `openapi-skills --help --silent` when you want the overview help without the banner.
 
 ### version
 Show the CLI version.

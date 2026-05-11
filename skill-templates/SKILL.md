@@ -1,6 +1,6 @@
 ---
 name: openapi-skills
-description: Use this skill for any OpenAPI, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect endpoints, filter or list operations, generate client code, write endpoint tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, endpoints, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI" or "Swagger."
+description: Use this skill for any OpenAPI, GraphQL, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect endpoints, root fields, filter or list operations, generate client code, write endpoint tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, endpoints, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI" or "Swagger."
 allowed-tools: Bash(openapi-skills*)
 ---
 
@@ -27,6 +27,12 @@ Never read, parse, search, or use files under:
 
 These files are NOT part of openapi-skills.  
 If the IDE prints a message like “Large tool result written to file…”, you must ignore it completely.
+
+1B. 🔎 GET BANNER-FREE OVERVIEW HELP FIRST
+When you need CLI help as an agent, use `openapi-skills --help --silent` so the banner does not pollute the output.
+- Treat this as the default way to get agent-friendly overview help.
+- Use it to discover commands, flags, and usage before guessing syntax.
+- Keep it for general CLI discovery, not for command-specific help pages.
 
 2. Are you about to use `get-operation --request`, `--response`, or `--response-schema`?
   - If the Output is too large, you MUST run `get-operation` with `--filter` or `--get` flags, to narrow down the results.
@@ -204,6 +210,12 @@ openapi-skills request <operationId> --api <apiName> --force
 Use `request --force --update-request` to patch specific fields after restoring the original schema shape by providing a single-quoted JSON object with flattened dot-notation keys. Example:
 ```bash
 openapi-skills request <operationId> --api <apiName> --force --update-request '{"user.name":"Ada","parameters.0.id":1}'
+```
+
+You may also remove fields from the request artifact by assigning the special sentinel value `"__delete__"`. When a flattened key is set to `"__delete__"`, that field is removed entirely before the request is sent (works for both object properties and array elements). Example:
+
+```bash
+openapi-skills request <operationId> --api <apiName> --force --update-request '{"parameters.0":"__delete__"}'
 ```
 
 Then inspect the request artifact to confirm changes are correct.

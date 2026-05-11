@@ -24,7 +24,7 @@ export async function updateConfig(apiName, options = {}) {
     if (typeof apiName !== "string" || apiName.trim().length === 0) {
         throw new Error("API name is required.");
     }
-    const { baseUrl, auth, vars, version, openapiSource, removeApi } = options;
+    const { baseUrl, auth, vars, version, openapiSource, schemaType, removeApi } = options;
     const updates = {};
     if (removeApi) {
         if (!(await fs.pathExists(configPath))) {
@@ -65,6 +65,9 @@ export async function updateConfig(apiName, options = {}) {
     }
     if (baseUrl !== undefined) {
         updates[`apis.${apiName}.baseUrl`] = baseUrl;
+    }
+    if (schemaType !== undefined) {
+        updates[`apis.${apiName}.schemaType`] = schemaType;
     }
     if (Object.keys(updates).length === 0)
         return;

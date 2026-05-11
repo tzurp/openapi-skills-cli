@@ -1,7 +1,8 @@
 export interface ClientCodeSchema {
+    schemaType: "rest";
     operationId: string;
-    method: string;
-    path: string;
+    method: string | null;
+    path: string | null;
     deprecated: boolean;
     params: {
         typeName: string;
@@ -18,5 +19,18 @@ export interface ClientCodeSchema {
     errors: Record<string, any>;
     enums: Record<string, string[]>;
 }
-export declare function buildClientCodeSchema(apiName: string, operationId: string, sanitizedOperationId: string, force?: boolean): Promise<ClientCodeSchema>;
+export interface GraphQLClientCodeSchema {
+    schemaType: "graphql";
+    fieldName: string;
+    rootType: "query" | "mutation" | "subscription";
+    args: Record<string, {
+        type: string;
+        required: boolean;
+    }>;
+    returnType: string;
+    query: string;
+}
+type BuildClientCodeSchemaResult = ClientCodeSchema | GraphQLClientCodeSchema;
+export declare function buildClientCodeSchema(apiName: string, operationId: string, sanitizedOperationId: string, force?: boolean): Promise<BuildClientCodeSchemaResult>;
+export {};
 //# sourceMappingURL=client-schema-builder.d.ts.map

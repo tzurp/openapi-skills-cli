@@ -1,16 +1,16 @@
 import { Command } from "commander";
-import parseOpenAPI, { validateSchema } from "./parser.js";
+import parseOpenAPI, { parseSchemaSource, validateSchema } from "./parser.js";
 import fs from "fs-extra";
 import path from "path";
 import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
-import { ensureConfig, updateConfig, listApis, getConfigValue, listEndpoints, deleteApi, getApiNotFoundResult } from "./index.js";
+import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, getApiNotFoundResult, loadConfig } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
 import {} from "./helper/json-updater.js";
-import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings } from "./validate-response.js";
+import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings, getSchemaType } from "./validate-response.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
-import { logger, emitJsonError, emitCommandError, logGeneratedPaths, toErrorMessage } from "./helper/logger.js";
+import { logger, emitJsonError, emitCommandError, toErrorMessage } from "./helper/logger.js";
 import { filterEndpoints, filterResolvedEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
 import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
@@ -25,8 +25,9 @@ const pkg = require("../package.json");
 await checkForUpdateOncePerTerminalSession(pkg.version);
 const openapiToSkillsDir = getOpenapiToSkillsDir();
 const program = new Command();
+const silentFlagRequested = process.argv.includes("--silent");
 program.name("openapi-skills")
-    .description("A command‑line tool for working with OpenAPI 2/3 schemas. Use it to explore API endpoints, validate and test requests, generate typed client‑code schemas, and produce skills for agent frameworks.")
+    .description("A command‑line tool for working with OpenAPI/Swagger specs. Use it to parse specs into artifacts, explore API endpoints, validate requests, generate typed client metadata, and teach AI agents how to operate the CLI and write API tests and client code.")
     .version(pkg.version);
 async function guardApiName(apiName) {
     const apiNotFound = await getApiNotFoundResult(apiName);
@@ -45,7 +46,10 @@ const banner = `
 ▀███▀ ██    ██▄▄▄ ██ ▀██ ██▀██ ██    ██     ▄▄██▀ ██ ██ ██ ██▄▄▄ ██▄▄▄ ▄▄██▀
 \u001b[0m
 `;
-program.addHelpText("before", banner);
+program.option("--silent", "Suppress the banner in help output for agent-friendly usage.");
+if (!silentFlagRequested) {
+    program.addHelpText("before", banner);
+}
 program.addHelpText("before", `
 ===================
  openapi-skills CLI
@@ -88,8 +92,8 @@ program
 });
 const generateCmd = program
     .command("generate [openapi-source]")
-    .description("Parse an OpenAPI source (file path or URL) and generate endpoints.json, schemas/, and config.json. Run this command first for a new spec. Supports: --validate, --base-url, --dereference, --no-progress.")
-    .option("--validate <schema>", "Validate an OpenAPI schema (file path or URL) and exit")
+    .description("Parse an OpenAPI or GraphQL source (file path or URL) and generate endpoints.json, schemas/, and config.json. Run this command first for a new spec. Supports: --validate, --base-url, --dereference, --no-progress.")
+    .option("--validate <schema>", "Validate an OpenAPI or GraphQL schema (file path or URL) and exit")
     .option("--base-url <url>", "Base URL for the API")
     .option("--dereference", "Fully dereference the entire OpenAPI document before processing endpoints")
     .option("--no-progress", "Disable the progress indicator")
@@ -125,7 +129,7 @@ const generateCmd = program
         const providedBaseUrl = typeof options.baseUrl === "string" ? options.baseUrl.trim() : "";
         const baseUrlProvided = providedBaseUrl.length > 0;
         const baseUrl = baseUrlProvided ? providedBaseUrl : "";
-        const apiName = await parseOpenAPI(openapiSource, baseUrl, { dereference: options.dereference === true, progress: options.progress !== false, rename: options.rename });
+        const apiName = await parseSchemaSource(openapiSource, baseUrl, { dereference: options.dereference === true, progress: options.progress !== false, rename: options.rename });
         const outDir = path.join(openapiToSkillsDir, apiName);
         const configPath = path.join(openapiToSkillsDir, "config.json");
         if (!baseUrlProvided) {
@@ -207,7 +211,7 @@ generateCmd.agentMeta = {
 };
 const listCmd = program
     .command("list")
-    .description("List summarized endpoint objects for the specified API as JSON. Supports advanced --path filtering, --filter, --method, --resolved/--dereferenced, --index slicing, and --count for endpoint totals. At least one filter is required unless '--index : ' is used intentionally.")
+    .description("List summarized endpoint objects for the specified API as JSON. Supports --filter, --resolved/--dereferenced, --index slicing, and --count for endpoint totals. Also supports OpenAPI‑only options (--path, --method) and the GraphQL‑only option (--root-type). At least one filter is required unless --index : is used intentionally. GraphQL APIs reject --method and --path, and OpenAPI APIs reject --root-type.")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--count", "Return the number of endpoints after applying any list filters and index slicing. With no filters, returns the total endpoint count.")
     .option("--resolved, --dereferenced", "Show only endpoints that already have generated schema details saved.")
@@ -231,8 +235,9 @@ const listCmd = program
     const values = Array.isArray(previous) ? previous : previous ? [previous] : [];
     return [...values, value];
 })
-    .option("--filter <filterPattern>", "Filter endpoints by keywords, operationId, path, summary, or description. Supports AND/OR (use spaces for AND, | for OR), e.g. --filter 'create account|register user'.")
-    .option("--method <method>", "Filter endpoints by HTTP method (GET, POST, etc)")
+    .option("--filter <filterPattern>", "Filter endpoints by any of their searchable properties. Supports AND/OR (use spaces for AND, | for OR), e.g. --filter 'create account|register user'.")
+    .option("--method <method>", "Filter endpoints by HTTP method (GET, POST, etc). Use this for OpenAPI endpoints.")
+    .option("--root-type <rootType>", "Filter GraphQL root fields by root type (query, mutation, or subscription).")
     .option("--index <range>", "Slice the filtered results with inclusive Python-like range syntax, e.g. 0:10, 5:, :10, -1, or :")
     .action(async (options) => {
     const apiName = options.api;
@@ -241,8 +246,9 @@ const listCmd = program
     }
     try {
         const endpointsPath = getEndpointsPath(apiName);
+        const schemaType = await getSchemaType(apiName);
         const resolveRequested = options.resolved === true || options.dereferenced === true;
-        const hasFilter = Boolean(options.path || options.filter || options.method || options.index || resolveRequested);
+        const hasFilter = Boolean(options.path || options.filter || options.method || options.rootType || options.index || resolveRequested);
         const filterOpts = {};
         if (typeof options.path === "string" || Array.isArray(options.path))
             filterOpts.path = options.path;
@@ -250,13 +256,39 @@ const listCmd = program
             filterOpts.filter = options.filter;
         if (typeof options.method === "string")
             filterOpts.method = options.method;
+        if (typeof options.rootType === "string")
+            filterOpts.rootType = options.rootType;
+        if (schemaType === "graphql" && (typeof options.method === "string" || typeof options.path === "string")) {
+            logger.result({
+                kind: "endpoint-list-error",
+                apiName,
+                valid: false,
+                schemaType,
+                error: "--method and --path are only valid for OpenAPI APIs.",
+            });
+            logger.error("--method and --path are only valid for OpenAPI APIs.");
+            process.exitCode = 2;
+            return;
+        }
+        if (schemaType === "openapi" && typeof options.rootType === "string") {
+            logger.result({
+                kind: "endpoint-list-error",
+                apiName,
+                valid: false,
+                schemaType,
+                error: "--root-type is only valid for GraphQL APIs.",
+            });
+            logger.error("--root-type is only valid for GraphQL APIs.");
+            process.exitCode = 2;
+            return;
+        }
         if (!options.count && !hasFilter) {
             logger.result({
                 kind: "endpoint-list-warning",
                 apiName,
                 valid: false,
-                message: "The list command requires at least one filter to avoid returning a large, unbounded result set. Use --path, --filter, --method, or --index to narrow the results. To intentionally return the full object, use '--index : '.",
-                suggestedFlags: ["--path", "--filter", "--method", "--index <range>"],
+                message: "The list command requires at least one filter to avoid returning a large, unbounded result set. Use --path, --filter, --method, --root-type, or --index to narrow the results. Use --path and --method for OpenAPI and --root-type for GraphQL. To intentionally return the full object, use '--index : '.",
+                suggestedFlags: ["--path", "--filter", "--method", "--root-type", "--index <range>"],
             });
             process.exitCode = 0;
             return;
@@ -297,14 +329,15 @@ const listCmd = program
         }
         if (filtered.length === 0) {
             logger.result([]);
-            if (options.path || options.filter || options.method || options.index || resolveRequested) {
+            if (options.path || options.filter || options.method || options.rootType || options.index || resolveRequested) {
                 const pathValue = Array.isArray(options.path) ? options.path.join(", ") : options.path;
                 const pathMsg = pathValue ? `path "${pathValue}"` : "";
                 const filterMsg = options.filter ? `filter \"${options.filter}\"` : "";
                 const methodMsg = options.method ? `method \"${options.method}\"` : "";
+                const rootTypeMsg = options.rootType ? `rootType \"${options.rootType}\"` : "";
                 const resolveMsg = resolveRequested ? `resolve` : "";
                 const indexMsg = options.index ? `index \"${options.index}\"` : "";
-                const msg = [pathMsg, filterMsg, methodMsg, resolveMsg, indexMsg].filter(Boolean).join(", ");
+                const msg = [pathMsg, filterMsg, methodMsg, rootTypeMsg, resolveMsg, indexMsg].filter(Boolean).join(", ");
                 logger.warn(`No endpoints matched the ${msg}.`);
             }
             return;
@@ -324,25 +357,26 @@ const listCmd = program
 listCmd.agentMeta = {
     name: "list",
     category: "Navigation",
-    usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--method <method>] [--index <range>]",
+    usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--method <method>] [--root-type <rootType>] [--index <range>]",
     description: [
         "List endpoint summaries for the specified API as JSON, preserving only operationId, method, path, summary, and description.",
         "At least one filter is required to list endpoints. --index is treated as a filter input as well, so the command can run when only an index slice is provided. When no filter is supplied, the command returns a structured warning payload instead of the full endpoint array.",
         "Use --count to return the number of endpoints after applying any list filters and index slicing. When no filters are supplied, it returns the total endpoint count and still emits a JSON count object instead of endpoint summaries.",
         "Use --resolved (alias --dereferenced) to show only endpoints that already have generated schema details saved.",
-        "Filtering can focus the results of very long endpoint lists. Use --path for advanced path matching, --filter for keywords, --resolved for schema-ready endpoints, and --index to slice the result list. Filtering is case-insensitive and supports:",
+        "Filtering can focus the results of very long endpoint lists. Use --path for advanced path matching, --filter for keywords across OpenAPI and GraphQL endpoint fields, --method for OpenAPI HTTP methods, --root-type for GraphQL root types, --resolved for schema-ready endpoints, and --index to slice the result list. Filtering is case-insensitive and supports:",
         "- Path prefix: --path '/users' (matches endpoints whose path begins with the prefix)",
         "- Parameter detection: --path :param (matches endpoints that contain at least one '{...}' path placeholder)",
         "- Segment matching: --path 'store order' (matches endpoints whose path contains both segments)",
         "- OR within a single path clause: --path 'store|shop' (matches either segment)",
         "- Multiple path flags are ANDed: --path /store --path order",
-        "- Simple substring filtering: --filter 'user account' (matches endpoints containing both 'user' and 'account' in any field)",
+        "- Simple substring filtering: --filter 'user account' (matches endpoints containing both 'user' and 'account' in any field, including GraphQL name/rootType fields)",
         "- OR filtering: --filter 'create|register|signup' (matches any endpoint containing any of the words)",
         "- Combined AND+OR: --filter 'create account|register user' (matches endpoints containing both 'create' and 'account', OR both 'register' and 'user')",
         "- Path substring search: --filter '/users' (matches endpoints whose path contains the substring)",
         "- OperationId: --filter 'getUser' (matches operationId field)",
         "- Summary/description: --filter 'delete permanently'",
-        "- Method filtering: --method GET (can be combined with --path and/or --filter)",
+        "- Method filtering: --method GET (OpenAPI only; can be combined with --path and/or --filter)",
+        "- GraphQL root type filtering: --root-type query (query, mutation, or subscription)",
         "- Index slicing: --index 0:10, --index 5:, --index :10, --index -1, --index :",
         "    Slices the filtered results using inclusive Python-like range syntax:",
         "      N         = only the Nth item (0-based, negative counts from end)",
@@ -359,8 +393,8 @@ listCmd.agentMeta = {
         "      --index :     (all items)",
         "      --count       (return the filtered/sliced endpoint count, or the total count when no filters are used)",
         "\n",
-        "Use --path when you want path-aware matching. Use --filter when you want substring matching across path, operationId, summary, or description.",
-        "Use --count when a user asks for the number of endpoints, such as 'count the endpoints for apiName' or 'how many endpoints does apiName have?'. The count should reflect the same path/filter/method/index criteria applied to list output.",
+        "Use --path when you want path-aware matching. Use --filter when you want substring matching across path, operationId/name, rootType, summary, or description. Use --method for OpenAPI endpoints and --root-type for GraphQL endpoints.",
+        "Use --count when a user asks for the number of endpoints, such as 'count the endpoints for apiName' or 'how many endpoints does apiName have?'. The count should reflect the same path/filter/method/rootType/index criteria applied to list output.",
         "If no endpoints match, outputs [] and prints a message to stderr."
     ].join("\n"),
     arguments: [
@@ -368,8 +402,9 @@ listCmd.agentMeta = {
         { name: "count", type: "flag", required: false, flag: true, description: "Return the number of endpoints after filtering and slicing." },
         { name: "resolved", type: "flag", required: false, flag: true, description: "Show only endpoints that already have generated schema details saved. Alias: --dereferenced." },
         { name: "path", type: "string[]", required: false, flag: true, description: "Filter endpoints by path structure." },
-        { name: "filter", type: "string", required: false, flag: true, description: "Filter endpoints by keywords, operationId, path, summary, or description." },
-        { name: "method", type: "string", required: false, flag: true, description: "Filter endpoints by HTTP method." },
+        { name: "filter", type: "string", required: false, flag: true, description: "Filter endpoints by keywords, operationId/name, rootType, path, summary, or description." },
+        { name: "method", type: "string", required: false, flag: true, description: "Filter OpenAPI endpoints by HTTP method." },
+        { name: "rootType", type: "string", required: false, flag: true, description: "Filter GraphQL endpoints by root type (query, mutation, or subscription)." },
         { name: "index", type: "string", required: false, flag: true, description: "Slice the filtered results with inclusive Python-like range syntax." }
     ],
     examples: [
@@ -382,6 +417,7 @@ listCmd.agentMeta = {
         "openapi-skills list --api petstore --path :param",
         "openapi-skills list --api petstore --filter addpet",
         "openapi-skills list --api petstore --filter 'create|register' --method POST",
+        "openapi-skills list --api countries --root-type query",
         "openapi-skills list --api petstore --resolved --count",
         "openapi-skills list --api petstore --filter '/users'",
         "openapi-skills list --api petstore --index 0:10"
@@ -775,12 +811,14 @@ const requestCmd = program
     .option("--update-request <json>", [
     "Update request artifact before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
     "Nested JSON objects are supported (they will be flattened and issue a warning), but the top-level value must be a JSON object. Invalid JSON will cause the command to fail.",
+    "To delete a field, set its value to \"__delete__\".",
     "Format (POSIX shells): --update-request '{\"field.path\":value,...}'",
     "Format (PowerShell): --update-request \"{\"field.path\":value,...}\"  (escape inner quotes as needed)",
     "  - Only flattened object dot-notation keys are recommended (e.g. 'items.0.name').",
     "Examples:",
     "   --update-request '{\"person.id\":\"2\"}'",
     "   --update-request '{\"items.0.name\":\"Alice\",\"items.1.value\":42}'",
+    "   --update-request '{\"parameters.0\":\"__delete__\"}'",
     "   --update-request '{\"address.street\":\"Main St\",\"address.zip\":12345}'",
     "Note: The CLI runs JSON.parse on the provided value; if parsing fails the command exits with an error."
 ].join("\n"))
@@ -844,7 +882,21 @@ const requestCmd = program
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const requestJsonPath = getOperationArtifactPath(apiName, sanitizedOperationId, "request");
         if (options.force === true) {
-            await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
+            const config = await loadConfig();
+            const configuredSchemaType = config.apis?.[apiName]?.schemaType;
+            let isGraphQLSchema = configuredSchemaType === "graphql";
+            if (!isGraphQLSchema && configuredSchemaType !== "openapi") {
+                try {
+                    const endpoints = await fs.readJson(getEndpointsPath(apiName));
+                    isGraphQLSchema = Array.isArray(endpoints) && endpoints.some((endpoint) => typeof endpoint?.rootType === "string");
+                }
+                catch {
+                    isGraphQLSchema = false;
+                }
+            }
+            if (!isGraphQLSchema) {
+                await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
+            }
             await prepareRequestTemplate(apiName, sanitizedOperationId, true);
         }
         else if (!(await fs.pathExists(requestJsonPath))) {
@@ -950,16 +1002,20 @@ requestCmd.agentMeta = {
     description: [
         "Make a live HTTP request for an endpoint, or prepare a multi-step request scenario without executing requests.",
         "When multiple operationIds are supplied, the command enters prepare-only mode and only refreshes request artifact templates for the scenario.",
+        "Request and Response Artifacts created by the request command never update automatically.",
+        "Each artifact reflects the endpoint or root field exactly as it was when the request ran.",
+        "Artifacts stay unchanged until another request is executed for that same endpoint or root field.",
+        "No other command updates or regenerates request and response artifacts.",
         "With --validate, validate only the response against the schema after the request is sent. It does not validate the request body or guarantee a response exists.",
         "With --force, regenerate request artifact from schema defaults. Use it with --update-request when you want the original schema-shaped template before patching, and skip it if you want to keep previous request values. Type mismatch warnings for --update-request are only checked when --force is used, because the regenerated template mirrors the schema.",
-        "With --update-request, patch request artifact before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. Use --force when you want to restore defaults and patch in the same run."
+        "With --update-request, patch request artifact before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. To delete a field, set its value to \"__delete__\" (for example, parameters.0). Use --force when you want to restore defaults and patch in the same run."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists." },
         { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
-        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Use with --force to rebuild defaults first." },
+        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
         { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." }
     ],
     examples: [
@@ -968,6 +1024,7 @@ requestCmd.agentMeta = {
         "openapi-skills request getPetById --api petstore --force --update-request '{\"user.profile.name\":\"Ada\"}'",
         "openapi-skills request getPetById --api petstore --update-request '{\"user.profile.name\":\"Ada\"}'",
         "openapi-skills request getPetById --api petstore --update-request '{\"parameters.0.id\":1}'",
+        "openapi-skills request getPetById --api petstore --update-request '{\"parameters.0\":\"__delete__\"}'",
         "openapi-skills request operationId1 operationId2 --api petstore"
     ],
     returns: {

@@ -6,12 +6,15 @@ type RequestJson = {
         value: unknown;
     }> | null;
     requestBody?: unknown;
+    query?: string;
+    variables?: Record<string, unknown>;
 };
 type MakeRequestResult = {
     request: any;
     response: any;
     warnings?: string[];
 };
+export declare function getSchemaType(apiName: string): Promise<"openapi" | "graphql">;
 export declare function collectRequestUpdateTypeWarnings(requestJson: RequestJson, requestJsonUpdates: Updates): string[];
 export declare function ensureResponseSchema(apiName: string, operationId: string): Promise<any>;
 export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[]): Promise<MakeRequestResult>;

@@ -103,6 +103,10 @@ export function filterEndpoints(endpoints, opts) {
         const method = opts.method.toLowerCase();
         filtered = filtered.filter(e => (e.method || "").toLowerCase() === method);
     }
+    if (opts.rootType) {
+        const rootType = opts.rootType.toLowerCase();
+        filtered = filtered.filter(e => (e.rootType || "").toLowerCase() === rootType);
+    }
     const pathClauses = normalizePathInputs(opts.path);
     if (pathClauses.length > 0) {
         filtered = filtered.filter(endpoint => {
@@ -113,7 +117,7 @@ export function filterEndpoints(endpoints, opts) {
     if (opts.filter) {
         const filterClause = parseClauses(opts.filter);
         filtered = filtered.filter(ep => {
-            const fields = [ep.operationId, ep.method, ep.path, ep.summary, ep.description]
+            const fields = [ep.operationId, ep.name, ep.method, ep.rootType, ep.path, ep.summary, ep.description]
                 .map(f => (f || "").toString().toLowerCase())
                 .join(" ");
             return matchesClause(fields, filterClause);

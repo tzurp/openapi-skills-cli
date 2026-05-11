@@ -1,7 +1,9 @@
 import fs from "fs-extra";
-import { getEndpointsPath } from "./helper/paths.js";
+import { getBundledPath, getEndpointsPath, getSchemasDir } from "./helper/paths.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
 import { resolveParameterSchema } from "./helper/parameter-schema.js";
+import { buildGraphQLArtifact, findGraphQLEndpoint } from "./helper/graphql.js";
+import { loadConfig } from "./index.js";
 function toPascalCase(str) {
     return str
         .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase())
@@ -155,7 +157,49 @@ function normalizeParams(grouped, operationId) {
     };
 }
 export async function buildClientCodeSchema(apiName, operationId, sanitizedOperationId, force = false) {
+    const config = await loadConfig();
     const endpoints = await fs.readJson(getEndpointsPath(apiName));
+    const hasGraphQLRootTypes = Array.isArray(endpoints) && endpoints.some((endpoint) => typeof endpoint?.rootType === "string");
+    const isGraphQLSchema = config.apis?.[apiName]?.schemaType === "graphql" || (config.apis?.[apiName]?.schemaType !== "openapi" && hasGraphQLRootTypes);
+    if (isGraphQLSchema) {
+        const endpoint = endpoints.find((ep) => ep.operationId === operationId || ep.name === operationId);
+        if (!endpoint) {
+            throw new Error(`Endpoint with operationId '${operationId}' not found.`);
+        }
+        const rootType = typeof endpoint.rootType === "string" ? endpoint.rootType : typeof endpoint.method === "string" ? endpoint.method : undefined;
+        if (!rootType || (rootType !== "query" && rootType !== "mutation" && rootType !== "subscription")) {
+            throw new Error(`Invalid GraphQL endpoint metadata for '${operationId}'.`);
+        }
+        const schemaPath = getSchemasDir(apiName) + `/${sanitizedOperationId}.json`;
+        let schema;
+        if (!force && await fs.pathExists(schemaPath)) {
+            schema = await fs.readJson(schemaPath);
+        }
+        else {
+            const bundled = await fs.readJson(getBundledPath(apiName));
+            const sourceText = typeof bundled?.source === "string" ? bundled.source : typeof bundled?.sourceText === "string" ? bundled.sourceText : undefined;
+            if (!sourceText) {
+                throw new Error(`GraphQL source not found for API '${apiName}'. Run generate first.`);
+            }
+            schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+            await fs.ensureDir(getSchemasDir(apiName));
+            await fs.writeJson(schemaPath, schema, { spaces: 2 });
+        }
+        return {
+            schemaType: "graphql",
+            fieldName: endpoint.name ?? operationId,
+            rootType,
+            args: Object.fromEntries(Object.entries(schema.args ?? {}).map(([name, def]) => {
+                const descriptor = def;
+                return [
+                    name,
+                    { type: descriptor.typeName ?? "unknown", required: descriptor.required === true }
+                ];
+            })),
+            returnType: schema.returns?.typeName ?? "unknown",
+            query: buildGraphQLArtifact(schema).query
+        };
+    }
     const endpoint = endpoints.find((ep) => ep.operationId === operationId);
     if (!endpoint) {
         throw new Error(`Endpoint with operationId '${operationId}' not found.`);
@@ -202,6 +246,7 @@ export async function buildClientCodeSchema(apiName, operationId, sanitizedOpera
     }
     const responseTypeName = toPascalCase(operationId.replace(/^(get|post|put|delete|patch|head|options)/i, "") || operationId);
     return {
+        schemaType: "rest",
         operationId,
         method: endpoint.method,
         path: endpoint.path,

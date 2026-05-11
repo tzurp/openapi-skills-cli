@@ -2,6 +2,7 @@ import SwaggerParser from "@apidevtools/swagger-parser";
 import $RefParser from "@apidevtools/json-schema-ref-parser";
 import fs from "fs-extra";
 import path from "path";
+import { buildGraphQLArtifact, extractGraphQLEndpoints, findGraphQLEndpoint, getGraphQLRootTypeFromMethod, isGraphQL, loadSourceText, selectionSetForDescriptor, typeStringForDescriptor } from "./helper/graphql.js";
 import { updateConfig } from "./index.js";
 import { getApiDir, getBundledPath, getComponentsPath, getSchemaPath, getSchemasDir } from "./helper/paths.js";
 import { isInteractive, logger } from "./helper/logger.js";
@@ -254,7 +255,7 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
             throw error;
         }
         try {
-            await updateConfig(apiName, { baseUrl, openapiSource, version });
+            await updateConfig(apiName, { baseUrl, openapiSource, schemaType: "openapi", version });
             const baseUrlText = baseUrl ? "with baseUrl" : "without baseUrl";
             logger.info(`Schema '${apiName}' added to config.json ${baseUrlText} and openapiSource recorded.`);
         }
@@ -269,8 +270,70 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
     }
     return apiName;
 }
+async function parseGraphQL(graphqlSource, baseUrl, options = {}, sourceText) {
+    let apiName = "";
+    const showProgressSignal = options.progress !== false && isInteractive;
+    const loadedSourceText = sourceText ?? await loadSourceText(graphqlSource);
+    if (!isGraphQL(loadedSourceText)) {
+        throw new Error("Invalid GraphQL schema: missing GraphQL schema markers or builder pattern.");
+    }
+    if (showProgressSignal) {
+        logger.progressLine(`Loading GraphQL schema from ${graphqlSource}...`);
+    }
+    apiName = options.rename || getApiName(graphqlSource);
+    const apiDir = getApiDir(apiName);
+    await fs.remove(apiDir);
+    const schemasDir = getSchemasDir(apiName);
+    await fs.ensureDir(schemasDir);
+    const endpoints = extractGraphQLEndpoints(loadedSourceText);
+    if (endpoints.length === 0) {
+        throw new Error("Invalid GraphQL schema: no query, mutation, or subscription fields were found.");
+    }
+    const bundledPath = getBundledPath(apiName);
+    await fs.writeJson(bundledPath, { schemaType: "graphql", source: loadedSourceText }, { spaces: 2 });
+    const endpointSummaries = endpoints.map(endpoint => ({
+        name: endpoint.name,
+        sanitizedOperationId: endpoint.sanitizedOperationId,
+        rootType: endpoint.rootType,
+        method: endpoint.method,
+        path: endpoint.path,
+        summary: endpoint.summary,
+        description: endpoint.description,
+    }));
+    for (const endpoint of endpoints) {
+        const schemaPath = getSchemaPath(apiName, endpoint.sanitizedOperationId);
+        await fs.ensureDir(path.dirname(schemaPath));
+        await fs.writeJson(schemaPath, endpoint, { spaces: 2 });
+    }
+    await fs.writeJson(path.join(apiDir, "endpoints.json"), endpointSummaries, { spaces: 2 });
+    try {
+        await updateConfig(apiName, { baseUrl, openapiSource: graphqlSource, schemaType: "graphql", version: "graphql" });
+        const baseUrlText = baseUrl ? "with baseUrl" : "without baseUrl";
+        logger.info(`Schema '${apiName}' added to config.json ${baseUrlText} and GraphQL source recorded.`);
+    }
+    catch (error) {
+        logger.error(`Error updating config.json: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+    }
+    if (showProgressSignal) {
+        logger.progressLine("GraphQL schema load complete.");
+    }
+    return apiName;
+}
+export async function parseSchemaSource(openapiSource, baseUrl, options = {}) {
+    const sourceText = await loadSourceText(openapiSource).catch(() => undefined);
+    if (sourceText && isGraphQL(sourceText)) {
+        return await parseGraphQL(openapiSource, baseUrl, options, sourceText);
+    }
+    return await parseOpenAPI(openapiSource, baseUrl, options);
+}
 export async function validateSchema(schemaSource) {
     try {
+        const sourceText = await loadSourceText(schemaSource).catch(() => undefined);
+        if (sourceText && isGraphQL(sourceText)) {
+            extractGraphQLEndpoints(sourceText);
+            return;
+        }
         await SwaggerParser.validate(schemaSource);
         return;
     }
