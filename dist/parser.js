@@ -2,9 +2,9 @@ import SwaggerParser from "@apidevtools/swagger-parser";
 import $RefParser from "@apidevtools/json-schema-ref-parser";
 import fs from "fs-extra";
 import path from "path";
-import { buildGraphQLArtifact, extractGraphQLEndpoints, findGraphQLEndpoint, getGraphQLRootTypeFromMethod, isGraphQL, loadSourceText, selectionSetForDescriptor, typeStringForDescriptor } from "./helper/graphql.js";
+import { extractGraphQLEndpoints, findGraphQLEndpoint, isGraphQL, loadSourceText } from "./helper/graphql.js";
 import { updateConfig } from "./index.js";
-import { getApiDir, getBundledPath, getComponentsPath, getSchemaPath, getSchemasDir } from "./helper/paths.js";
+import { getApiDir, getBundledPath, getComponentsPath, getEndpointsPath, getSchemaPath, getSchemasDir } from "./helper/paths.js";
 import { isInteractive, logger } from "./helper/logger.js";
 import { sanitizeOperationPath } from "./helper/sanitizer.js";
 export function getApiName(openapiSource) {
@@ -51,6 +51,45 @@ function removeCycles(obj, seen = new WeakSet()) {
         return cleanedObject;
     }
     return obj;
+}
+async function readGraphQLBundledSource(apiName) {
+    const bundledPath = getBundledPath(apiName);
+    const bundled = await fs.readJson(bundledPath);
+    const sourceText = typeof bundled?.source === "string"
+        ? bundled.source
+        : typeof bundled?.sourceText === "string"
+            ? bundled.sourceText
+            : undefined;
+    if (!sourceText) {
+        throw new Error(`GraphQL source not found for API '${apiName}'. Run generate first.`);
+    }
+    return sourceText;
+}
+async function ensureGraphQLEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force = false) {
+    const schemaPath = getSchemaPath(apiName, sanitizedOperationId);
+    if (!force && await fs.pathExists(schemaPath)) {
+        return fs.readJson(schemaPath);
+    }
+    const endpoints = await fs.readJson(getEndpointsPath(apiName));
+    const endpoint = Array.isArray(endpoints)
+        ? endpoints.find((entry) => entry.operationId === operationId || entry.name === operationId || entry.sanitizedOperationId === sanitizedOperationId)
+        : undefined;
+    if (!endpoint) {
+        throw new Error(`Endpoint '${operationId}' not found in GraphQL endpoint list.`);
+    }
+    const rootType = typeof endpoint.rootType === "string"
+        ? endpoint.rootType
+        : typeof endpoint.method === "string"
+            ? endpoint.method
+            : undefined;
+    if (!rootType || (rootType !== "query" && rootType !== "mutation" && rootType !== "subscription")) {
+        throw new Error(`Invalid GraphQL endpoint metadata for '${operationId}'.`);
+    }
+    const sourceText = await readGraphQLBundledSource(apiName);
+    const schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+    await fs.ensureDir(path.dirname(schemaPath));
+    await fs.writeJson(schemaPath, schema, { spaces: 2 });
+    return schema;
 }
 function findEndpointInPaths(pathsObject, operationId) {
     for (const [pathKey, methods] of Object.entries(pathsObject)) {
@@ -114,6 +153,9 @@ export async function ensureEndpointSchemaFile(apiName, operationId, sanitizedOp
     const bundledPath = getBundledPath(apiName);
     const componentsPath = getComponentsPath(apiName);
     const bundled = await fs.readJson(bundledPath);
+    if (bundled && typeof bundled === "object" && bundled.schemaType === "graphql") {
+        return await ensureGraphQLEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force);
+    }
     if (!bundled || typeof bundled !== "object" || !("paths" in bundled)) {
         throw new Error(`Bundled OpenAPI document not found for API '${apiName}'. Run generate first.`);
     }
@@ -295,8 +337,6 @@ async function parseGraphQL(graphqlSource, baseUrl, options = {}, sourceText) {
         name: endpoint.name,
         sanitizedOperationId: endpoint.sanitizedOperationId,
         rootType: endpoint.rootType,
-        method: endpoint.method,
-        path: endpoint.path,
         summary: endpoint.summary,
         description: endpoint.description,
     }));

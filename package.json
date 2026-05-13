@@ -1,7 +1,7 @@
 {
   "name": "openapi-skills",
-  "version": "0.5.1-rc.0",
-  "description": "CLI toolkit for turning OpenAPI and GraphQL specs into agent-ready skills, typed client schemas, request validators, endpoint tests, and exploration tools. Teaches AI agents how to operate the CLI and write API tests and client code.",
+  "version": "0.5.1-rc.1",
+  "description": "CLI toolkit for turning OpenAPI and GraphQL specs into agent-ready skills, typed client schemas, request validators, operation tests, and exploration tools. Teaches AI agents how to operate the CLI and write API tests and client code.",
   "bin": {
     "openapi-skills": "./bin/openapi-skills"
   },

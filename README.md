@@ -13,14 +13,14 @@ Includes a built‑in, schema‑agnostic skill bundle that teaches AI agents how
 
 - Explore and inspect OpenAPI 2.0/3.x schemas  
 - Parse specs into structured artifacts (`endpoints.json`, `schemas/`)  
-- List endpoints, filter by OpenAPI method or GraphQL root type, structured path matching, or keywords  
-- Describe endpoints with full raw schema detail  
+- List operations, filter by OpenAPI method or GraphQL root type, structured path matching, or keywords  
+- Describe operations with full raw schema detail  
 - Retrieve stored operation artifacts (`request.json`, `response.json`, `response-schema.json`)  
 - Validate live API requests and responses against the OpenAPI contract  
 - Generate typed client metadata for TypeScript/JavaScript SDKs  
 - Create and update request templates (`request.json`)  
 - Manage and persist authentication headers  
-- Generate endpoint tests from scenario descriptions  
+- Generate operation tests from scenario descriptions  
 
 ---
 
@@ -64,7 +64,7 @@ Once installed, the agent becomes fully capable of:
 
 - exploring APIs  
 - generating client code  
-- generating endpoint tests  
+- generating operation tests  
 - validating requests  
 - choosing the correct CLI commands automatically
 - following your workflow without additional user guidance
@@ -91,7 +91,7 @@ openapi-skills generate <schema> --dereference
 ### Benefits:
 - Eliminates `$ref` lookups at runtime  
 - Produces a fully expanded schema tree  
-- Significantly faster endpoint processing  
+- Significantly faster operation processing  
 - Ideal for large APIs with deep nesting  
 
 ### Important:
@@ -115,18 +115,18 @@ Here’s an OpenAPI file. Parse it and get it ready for exploration:
 
 ---
 
-## 2. Exploring Endpoints
+## 2. Exploring Operations
 
 ```
-Show me the first 10 endpoints in this API.
-```
-
-```
-List the all the GET endpoints under path: /users.
+Show me the first 10 operations in this API.
 ```
 
 ```
-Find endpoints related to billing or invoices.
+List all the GET operations under path: /users.
+```
+
+```
+Find operations related to billing or invoices.
 ```
 
 ---
@@ -152,17 +152,17 @@ The agent will:
 ## 4. Generating Client Code
 
 ```
-Generate client code for the <operationId> endpoint.
+Generate client code for the <operationId> operation.
 ```
 
 The agent will follow the client‑code scenario automatically.
 
 ---
 
-## 5. Describing an Endpoint
+## 5. Describing an Operation
 
 ```
-I need the full raw schema for the <operationId> endpoint.
+I need the full raw schema for the <operationId> operation.
 ```
 
 ---
@@ -189,10 +189,10 @@ Use this auth token for the API:
 
 ---
 
-## 8. Generating Endpoint Tests
+## 8. Generating Operation Tests
 
 ```
-Create a test file for the <operationId> endpoint.  
+Create a test file for the <operationId> operation.  
 I'm using Jest.
 ```
 
@@ -270,16 +270,16 @@ openapi-skills generate --validate ./openapi.yaml
 ---
 
 ### list
-List summarized endpoint objects for a parsed API as JSON.
+List summarized operation objects for a parsed API as JSON.
 
-At least one filter input is required to list endpoints. The command accepts `--path`, `--filter`, `--method`, `--root-type`, or `--index` as filter inputs.
+At least one filter input is required to list operations. The command accepts `--path`, `--filter`, `--method`, `--root-type`, or `--index` as filter inputs.
 
 Supports:
 
-- `--count` (returns the filtered/sliced endpoint count; with no filters, returns the total count)
+-- `--count` (returns the filtered/sliced operation count; with no filters, returns the total count)
 - `--path` (prefix, `:param`, or segment matching)
 - `--filter`
-- `--method` for OpenAPI endpoints
+-- `--method` for OpenAPI operations
 - `--root-type` for GraphQL root types (`query`, `mutation`, or `subscription`)
 - `--index`
 
@@ -289,12 +289,12 @@ If you intentionally want the entire list, use `--index : `.
 ---
 
 ### generate-client-schema
-Produce structured metadata for client code generation. This is the recommended first choice for endpoint inspection when you want client-ready shape information.
+Produce structured metadata for client code generation. This is the recommended first choice for operation inspection when you want client-ready shape information.
 
 ---
 
 ### describe
-Fallback-only: return the full raw schema for an endpoint when `generate-client-schema` is not sufficient.
+Fallback-only: return the full raw schema for an operation when `generate-client-schema` is not sufficient.
 
 ---
 
@@ -332,7 +332,7 @@ openapi-skills get-operation getPetById --api petstore --response --get body --f
 ---
 
 ### request
-Make a live HTTP request for an endpoint. When you pass multiple operationIds, the command switches to prepare-only mode and only refreshes request templates.
+Make a live HTTP request for an operation. When you pass multiple operationIds, the command switches to prepare-only mode and only refreshes request templates.
 
 Supports:
 

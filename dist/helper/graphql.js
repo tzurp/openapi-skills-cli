@@ -543,8 +543,6 @@ function extractGraphQLEndpointsFromSDL(sourceText) {
                 operationId: field.name,
                 sanitizedOperationId: sanitizeOperationPath(field.name),
                 rootType,
-                method: null,
-                path: null,
                 args,
                 returns: describeOutputType(field.type),
             };
@@ -689,8 +687,6 @@ function extractGraphQLEndpointsFromBuilderSource(sourceText) {
                             operationId: rawName,
                             sanitizedOperationId: sanitizeOperationPath(rawName),
                             rootType,
-                            method: null,
-                            path: null,
                             args,
                             returns: typeExpression ? resolveBuilderOutputDescriptor(typeExpression.getText(sourceFile), typeMaps) : { kind: "unknown", typeName: "Unknown" },
                         };

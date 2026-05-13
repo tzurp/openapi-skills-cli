@@ -1,6 +1,6 @@
 ---
 name: openapi-skills
-description: Use this skill for any OpenAPI, GraphQL, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect endpoints, root fields, filter or list operations, generate client code, write endpoint tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, endpoints, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI" or "Swagger."
+description: Use this skill for any OpenAPI, GraphQL, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect operations (OpenAPI endpoints / `operationId`, GraphQL root fields), filter or list operations, generate client code, write operation tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, operations, endpoints, root fields, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI", "Swagger" or "GraphQL".
 allowed-tools: Bash(openapi-skills*)
 ---
 
@@ -59,7 +59,13 @@ Fast defaults:
 
 ## Trigger Rules
 
-Use this skill when the user provides an OpenAPI or Swagger spec file, wants to explore or filter endpoints, asks for TypeScript or JavaScript client generation, needs to make or debug live API requests, or needs to set or update authentication headers.
+Use this skill when the user provides an OpenAPI or GraphQL spec file, wants to explore or filter operations, asks for TypeScript or JavaScript client generation, needs to make or debug live API requests, or needs to set or update authentication headers.
+
+## Operation Definition
+
+In this skill, an **operation** means the schema-specific unit returned by `list` and referenced by `request` / `get-operation`:
+- **OpenAPI:** an HTTP method + path pair, usually identified by `operationId`.
+- **GraphQL:** a root field on the query, mutation, or subscription type, identified by `name` and `rootType`.
 
 ## ⚠️ MANDATORY RULES (Non-Negotiable)
 
@@ -67,7 +73,7 @@ Use this skill when the user provides an OpenAPI or Swagger spec file, wants to 
 Read the required reference before generating client, SDK, wrapper, test, request-helper, or other schema-driven code.
 
 - For client/SDK/wrapper code, read `references/write-client-code.md`.
-- For endpoint tests, read `references/create-endpoint-test.md`.
+- For operation tests, read `references/create-endpoint-test.md`.
 - If the request includes phrases like "create test", "generate test", "write test", "build client", "generate client", or "write wrapper", stop and read the matching reference first.
 - If the reference is not loaded, refuse with: “I need to read the required reference document before generating code.”
 
@@ -81,19 +87,20 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - If the API schema changed, rerun with `--force` to refresh the cached schema output.
 - When `response: null`, generate `Promise<void>`.
 
-### 4. REQUIRED: Always apply filters to narrow endpoint results
-- Never run `list` without a filter such as `--method`, `--path`, `--filter`, `--index`, or `--resolved`.
-- Prefer `--method <METHOD>` first, then add `--path <prefix>`, `--filter <keyword>`, or `--index <range>` as needed.
+### 4. REQUIRED: Always apply filters to narrow operation results
+- Never run `list` without at least one schema-appropriate filter. Valid filters include `--method`, `--path`, `--root-type`, `--filter`, and `--index`.
+- Prefer the schema-appropriate filter first, then add `--filter`, `--index`, or `--resolved` as needed. Use `--method`/`--path` when the schema exposes OpenAPI operations, and `--root-type` when it exposes GraphQL root fields.
 - Use zero-based `--index` values, or index ranges like `0:5` to limit results.
 - Use `--count` first when exploring an unknown API.
 - Example: `openapi-skills list --api petstore --method GET --path /pet --index 0:5`.
-- If you only want endpoints that already have generated schema details saved, add `--resolved` (alias `--dereferenced`).
+- GraphQL example: `openapi-skills list --api graphql-api --root-type query --filter user --index 0:5`.
+- If you only want operations that already have generated schema details saved, add `--resolved` (alias `--dereferenced`).
 
 ### 5. REQUIRED: Use `openapi-skills` CLI commands; never substitute external tools or agent interpretation
 - Use `openapi-skills request` for API calls.
 - Use `openapi-skills generate-client-schema` instead of manual request construction.
 - Use `list` or `generate-client-schema` instead of parsing the spec directly.
-- When the user asks to make a request, call the API, or test an endpoint, use `openapi-skills request` with `--validate`.
+- When the user asks to make a request, call the API, or test an operation, use `openapi-skills request <operationId> [options]`.
 
 ### 6. NEVER read/write any file under `.openapi-skills` directly
 - Never read or write generated files under `.openapi-skills` directly.
@@ -121,54 +128,35 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - If you are unsure whether the reference is loaded, read it again.
 - Refuse clearly: "I need to read [specific reference] before generating this code."
 
-## Decision Matrix: Which Command To Use
+## Workflow Dependencies
 
-| User Request | Do this |
-|---|---|
-| "Explore endpoints" | Use `list` with `--method` and `--path` first, then add `--filter`, `--index`, ``--resolved`, or `--count` as needed. |
-| "How many endpoints?" | Run `list --api <apiName> --method <METHOD> --count`. |
-| "Get the 3rd GET endpoint" | Run `list --api <apiName> --method GET --index 2`. |
-| "Generate endpoint tests" | Read `references/create-endpoint-test.md`, then use `generate-client-schema`. |
-| "Generate client code" | Read `references/write-client-code.md`, then use `generate-client-schema`. |
-| "Show endpoint details" | Use `generate-client-schema` first; use `describe` only if needed. |
-| "Make a request" / "Debug API" | Use `request` with `--validate` to validate only the response against the schema; patch only with a single-quoted JSON object using flattened dot-notation keys. |
-| "Set auth headers" | Use `set-env --api <apiName> --auth <json>`. |
-| "Parse a new spec" | Check existing APIs first; run `generate` only if needed. |
-| "Inspect a prepared request in multi-step flow" | Use `get-operation --request` or `get-operation-artifact --request`. |
-| "Patch and execute a step in multi-step flow" | Use `request --force --update-request` with a single-quoted JSON object using flattened dot-notation keys. |
-| "Make a live HTTP request scenario" / "Build a scenario with multiple steps" / "Chain requests into a scenario" | Use the "Prepare a Multi-Step Flow" workflow. Prepare all steps at once, inspect each request template, patch values from earlier responses, and feed outputs into the next request. |
-
-## Initialization Sequence
-
-Follow this sequence:
-
-1. Run `openapi-skills get-api-names`.
-2. If the API is missing, run `openapi-skills generate <spec-file-or-url> --base-url <url> --no-progress`.
-3. Use the confirmed `--api <apiName>` value for all later commands.
-
-## API Selection Logic
-
-| Scenario | Action |
-|---|---|
-| User specifies `--api <name>` | Use that value directly. |
-| `get-api-names` returns one API | Use that API automatically. |
-| `get-api-names` returns zero or multiple APIs | Ask the user which API to use. |
+- Run `get-api-names` before choosing an API name.
+- Run `generate` before any other command only when the API has never been parsed, or when the parsed API is stale and needs regeneration.
+- Run `request` before `get-operation` or `get-operation-artifact`.
+- Run `get-operation --response-schema` before `--get` or `--filter` when the response shape is unknown.
+- Apply `--get` before `--filter`.
+- Run `generate-client-schema` before `describe` for client code.
+- Run `request --force` before `--update-request` when you need to analyze a fresh template.
 
 ## Command Reference
 
-All commands use Bash syntax: `openapi-skills <command> ...`
-
+All commands use Bash syntax: `openapi-skills <command> [options]`.
 <command-list-here>
 
 ## Workflows
 
 ### Explore a New API
 
-1. Check existing APIs: `openapi-skills get-api-names`
-2. If not listed, parse it: `openapi-skills generate ./petstore.yaml --base-url https://api.example.com --no-progress`
-3. List endpoints: `openapi-skills list --api petstore --path /pet`
-4. If you only want endpoints with ready-to-use schema details, add `--resolved`.
-5. Inspect endpoint: `openapi-skills generate-client-schema getPetById --api petstore`
+1. Check existing APIs with `openapi-skills get-api-names`.
+2. If not listed, parse the spec with `openapi-skills generate ...`. Do not rerun `generate` unless the API has never been parsed or is stale.
+3. List operations with a schema-appropriate filter, then narrow with `--filter`, `--index`, or `--resolved` as needed.
+4. Inspect the target operation with `openapi-skills generate-client-schema <operationId> --api <apiName>`.
+
+### Generate Operation Test
+
+1. Read [references/create-endpoint-test.md](references/create-endpoint-test.md) first.
+2. Get the target operation with a schema-appropriate filter and inspect any live request data you need (optional).
+3. Use the schema metadata and test-generation rules to write the test file.
 
 ### Generate Client Code
 
@@ -179,68 +167,19 @@ All commands use Bash syntax: `openapi-skills <command> ...`
 
 ### Debug a Request
 
-1. Validate response: `openapi-skills request <operationId> --api <apiName> --validate`
-2. Read validation output; it shows exact mismatches
-3. MUST run `openapi-skills request <operationId> --api <apiName> --force` first to create the exact request schema artifact.
-4. MUST retrieve the generated request schema artifact (created in step 3) with `openapi-skills get-operation <operationId> --api <apiName> --request`.
-5. Change values only. NEVER rename, add, or remove key names in the request schema.
-6. Populate the required values and issue a new request.
-7. If you need to patch fields after restoring the original schema shape: `openapi-skills request <operationId> --api <apiName> --force --update-request '<json>'` and pass a single-quoted JSON object that uses flattened dot-notation keys. Invalid JSON fails fast.
-8. Try again: `openapi-skills request <operationId> --api <apiName> --validate`.
-
-**Never edit response.json directly**
+1. Validate the response with `openapi-skills request <operationId> --api <apiName> --validate`.
+**--validate** is optional; checks the response against the schema and has nothing to do with successful http status codes. You can get a 200 response that still fails validation if the body structure is wrong.
+2. If you need to change the request shape, rebuild it with `--force` first.
+3. Inspect the request artifact, then patch only existing fields with flattened dot-notation keys.
+4. Re-run validation after each change.
 
 ### Prepare a Multi-Step Flow
 
-1. Prepare all steps at once: `openapi-skills request <operationId1> <operationId2> <operationId3> --api <apiName>`
-2. Inspect the first template (prepared in step 1): `openapi-skills get-operation <operationId1> --request`
-3. Patch and execute the step: `openapi-skills request <operationId1> --force --update-request '{"field.path":"value"}'` using a single-quoted JSON object with flattened dot-notation keys. Invalid JSON fails fast.
-4. Inspect the response (from the request executed in step 3): `openapi-skills get-operation <operationId1> --response`
-5. Feed response values into the next step in the chain
-
-Use this workflow when a user asks for a live HTTP request scenario, an end-to-end request chain, or any multi-step flow where later requests depend on earlier responses.
+1. Prepare all dependent steps together (`openapi-skills request <operationId1> <operationId2> <operationId3>`).
+2. Inspect the first request template before patching it.
+3. Patch values from earlier responses into the next request using flattened dot-notation keys.
+4. Inspect each response before moving to the next step.
 
 ### Update Request Template
 
-Use `request --force` to reset the request artifact to schema defaults. 
-```bash
-openapi-skills request <operationId> --api <apiName> --force
-```
-
-Use `request --force --update-request` to patch specific fields after restoring the original schema shape by providing a single-quoted JSON object with flattened dot-notation keys. Example:
-```bash
-openapi-skills request <operationId> --api <apiName> --force --update-request '{"user.name":"Ada","parameters.0.id":1}'
-```
-
-You may also remove fields from the request artifact by assigning the special sentinel value `"__delete__"`. When a flattened key is set to `"__delete__"`, that field is removed entirely before the request is sent (works for both object properties and array elements). Example:
-
-```bash
-openapi-skills request <operationId> --api <apiName> --force --update-request '{"parameters.0":"__delete__"}'
-```
-
-Then inspect the request artifact to confirm changes are correct.
-
-## Troubleshooting
-
-| Problem | Next step |
-|---|---|
-| "API not found" when running `list` or `request` | Run `openapi-skills generate <spec>` first. |
-| `get-api-names` returns 0 APIs | Parse a spec with `generate`. |
-| `list` returns empty `[]` | Broaden or change the filters, or use `--count`. |
-| Large API takes forever to list | Add `--method`, `--path`, `--filter`, `--index` or `--resolved`. |
-| request fails | Adjust values using `request --force --update-request` with a single-quoted JSON object containing flattened dot-notation keys. `--validate` only checks the response after the request is sent. |
-| "required property X missing" | Rebuild the request template with `--force`, then patch it. |
-| "Invalid type: expected integer, got string" | Use the correct JSON value type in `--update-request`. |
-| "404 Not Found" | Check the base URL and whether the resource exists. |
-
-## Reference Documentation
-
-**For generating TypeScript/JavaScript client code:**
-- [references/write-client-code.md](references/write-client-code.md)
-
-**For generating endpoint tests:**
-- [references/create-endpoint-test.md](references/create-endpoint-test.md)
-
----
-
-**Note:** Skill installation is performed by the user, not the agent.
+Use `request --force` to reset the request artifact, `--update-request` to patch existing fields, and `"__delete__"` to remove fields entirely. Inspect the artifact after each change.

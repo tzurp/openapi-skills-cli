@@ -1,10 +1,10 @@
-# API Endpoint Test Generation Skill
+# API Operation Test Generation Skill
 
 ## Purpose
-Generate live integration tests for OpenAPI endpoints that exercise and validate the generated client code against a real API.
+Generate live integration tests for schema operations that exercise and validate the generated client code against a real API.
 
 ## Core Principle
-**All generated tests MUST call the endpoint exclusively through the generated client class. NO direct HTTP calls (fetch, axios, supertest, etc.). NO mocks or test doubles.**
+**All generated tests MUST call the operation exclusively through the generated client class. NO direct HTTP calls (fetch, axios, supertest, etc.). NO mocks or test doubles.**
 
 This ensures:
 - Client code is exercised in realistic scenarios
@@ -21,7 +21,7 @@ This ensures:
 
 Every generated test file must start with:
 ```typescript
-// Generated from <apiName> OpenAPI schema by openapi-skills.
+// Generated from <apiName> API schema by openapi-skills.
 ```
 
 ---
@@ -42,13 +42,15 @@ Every generated test file must start with:
    - Extract `apiName` from output
    - If not found, offer to parse it
 
-### Step 2: Retrieve Endpoint Metadata
-1. Run: `openapi-skills list --api <apiName> --method <METHOD> --path <prefix>`
-2. Extract: `operationId`, `method`, `path`, response codes
-3. Note: If endpoint returns multiple response codes (e.g., 200, 404), plan error tests for each
+### Step 2: Retrieve Operation Metadata
+1. Run `openapi-skills list --api <apiName>` with at least one filter. Valid filters include `--method`, `--path`, `--root-type`, `--filter`, and `--index`. Use the schema-appropriate filters; `--filter` and `--index` can be combined with either schema.
+2. Extract:
+   - OpenAPI: `operationId`, `method`, `path`
+   - GraphQL: `name`, `rootType`
+3. Note: If the operation returns multiple response codes or outcomes, plan error tests for each relevant branch
 
 ### Step 3: (Optional) Enrich with Live Data
-1. Run: `openapi-skills request <operationId> --api <apiName>` (optional)
+1. Run: `openapi-skills request <operationName> --api <apiName>` (optional)
    - Produces realistic `request.json` and `response.json`
    - Use if request body is complex or response structure unclear
    - NOT required; can generate tests without this
@@ -56,7 +58,7 @@ Every generated test file must start with:
 ### Step 4: Generate Test File
 1. Ensure `/tests` directory exists (create if needed)
 2. Generate tests using rules in next sections
-3. Filename: `<operationId>.test.ts`
+3. Filename: `<operationName>.test.ts`
 
 ---
 
@@ -87,18 +89,18 @@ Every generated test file must start with:
 ## Test Types (Definitions & Requirements)
 
 ### 1. Success Test (Happy Path)
-**Definition:** Endpoint is called with valid input; API returns a successful response.
+**Definition:** Operation is called with valid input; API returns a successful response.
 
-**Generates when:** Always (every endpoint has at least one success scenario)
+**Generates when:** Always (every operation has at least one success scenario)
 
 **What to assert:**
 - Response structure matches client return type (check keys/types exist)
 - Response status is 2xx
-- Key fields have expected values (use client types or OpenAPI schema constraints)
+- Key fields have expected values (use client types or API schema constraints)
 
 **Example triggers:**
-- GET endpoint with path `{id}` → provide valid ID, expect pet details
-- POST endpoint → provide valid request body, expect 201 + resource ID
+- GET operation with path `{id}` → provide valid ID, expect pet details
+- POST operation → provide valid request body, expect 201 + resource ID
 
 **Minimum assertions:**
 ```typescript
@@ -109,9 +111,9 @@ expect(result.name).toBeDefined();
 ```
 
 ### 2. Error Test (Failure Scenarios)
-**Definition:** Endpoint is called with invalid input or encounters an error; API returns an error response.
+**Definition:** Operation is called with invalid input or encounters an error; API returns an error response.
 
-**Generates when:** Endpoint defines non-2xx responses (400, 404, 500, etc.)
+**Generates when:** Operation defines non-2xx responses (400, 404, 500, etc.)
 
 **How many:** One test per distinct error response type (one 404 test, one 400 test, etc.)
 
@@ -133,9 +135,9 @@ expect(result.status).toBe(404);
 ```
 
 ### 3. Validation Test (Input Constraints)
-**Definition:** Endpoint requires specific input validation per OpenAPI schema (e.g., required fields, min/max values, enum constraints).
+**Definition:** Operation requires specific input validation per API schema (e.g., required fields, min/max values, enum constraints).
 
-**Generates when:** OpenAPI schema includes validation rules (required properties, minLength, minimum value, enum, pattern, etc.)
+**Generates when:** API schema includes validation rules (required properties, minLength, minimum value, enum, pattern, etc.)
 
 **What to assert:**
 - Omitting required field → API returns 400 error
@@ -161,11 +163,11 @@ expect(result.error).toContain('required'); // or similar
 
 ### File Structure
 - **Location:** `/tests` directory
-- **Filename:** `<operationId>.test.ts`
-- **First line:** `// Generated from <apiName> OpenAPI schema by openapi-skills.`
+- **Filename:** `<operationName>.test.ts`
+- **First line:** `// Generated from <apiName> API schema by openapi-skills.`
 
 ### Client Usage Requirement
-- All tests MUST invoke the client's method for the endpoint under test
+- All tests MUST invoke the client's method for the operation under test
 - Import the client class: `import { PetstorePetClient } from '../client/PetstorePetClient'`
 - Instantiate with `FetchClient`: `const client = new PetstorePetClient(httpClient)`
 - Call method: `const result = await client.findPetById(1)`
@@ -185,16 +187,16 @@ const httpClient = new FetchClient(apiBaseUrl);
 const petstorePetClient = new PetstorePetClient(httpClient);
 ```
 
-### Test Count per Endpoint
+### Test Count per Operation
 - **Success test:** Always (1)
-- **Error tests:** One per non-2xx response code defined in endpoint (0 to N)
+- **Error tests:** One per non-2xx response code defined for the operation (0 to N)
 - **Validation tests:** One per input validation rule if applicable (0 to N)
 - **Minimum:** 1 (success); 2-3 typical
 
 ### Assertions Strategy
 1. **Structure assertions:** Verify response keys/properties exist
 2. **Type assertions:** Verify values match expected types (number, string, etc.)
-3. **Value assertions:** Use realistic values from OpenAPI constraints or live request data
+3. **Value assertions:** Use realistic values from API constraints or live request data
 4. **Status assertions:** Explicitly check response status code (2xx for success, specific codes for errors)
 
 Example:
@@ -221,8 +223,8 @@ expect(result.error.message).toContain('not found');
 ```
 
 ### Client Variable Naming
-- Use descriptive, endpoint-specific names
-- Format: `<ApiName><Endpoint>Client`
+- Use descriptive, operation-specific names
+- Format: `<ApiName><Operation>Client`
 - Examples: `petstorePetClient`, `githubRepoClient`, `stripePaymentClient`
 - NOT: `client`, `c`, `httpClient`, `apiClient`
 
@@ -299,15 +301,15 @@ test('getPetById returns pet', async ({ request }) => {
 | **API base URL wrong** | Check `apis.<apiName>.baseUrl` in config.json matches live API |
 | **Client class import fails** | Verify client code generated first using `/references/write-client-code.md` |
 | **Tests fail at runtime** | Ensure live API is accessible; tests perform real HTTP requests |
-| **Response doesn't match type** | Verify OpenAPI schema is accurate; report schema issues to API maintainer |
+| **Response doesn't match type** | Verify API schema is accurate; report schema issues to API maintainer |
 
 ---
 
 ## Examples
 
-### Example 1: Jest Test (GET endpoint)
+### Example 1: Jest Test (GET operation)
 ```typescript
-// Generated from petstore OpenAPI schema by openapi-skills.
+// Generated from petstore API schema by openapi-skills.
 import fs from 'fs-extra';
 import path from 'path';
 import { FetchClient } from './fetch-client';
@@ -340,9 +342,9 @@ describe('PetstorePetClient', () => {
 });
 ```
 
-### Example 2: Vitest Test (POST endpoint)
+### Example 2: Vitest Test (POST operation)
 ```typescript
-// Generated from petstore OpenAPI schema by openapi-skills.
+// Generated from petstore API schema by openapi-skills.
 import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'fs-extra';
 import path from 'path';
@@ -379,7 +381,7 @@ describe('PetstorePetClient', () => {
 
 ### Example 3: Playwright Test (API testing)
 ```typescript
-// Generated from petstore OpenAPI schema by openapi-skills.
+// Generated from petstore API schema by openapi-skills.
 import { test, expect } from '@playwright/test';
 import fs from 'fs-extra';
 import path from 'path';

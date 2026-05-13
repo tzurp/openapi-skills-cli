@@ -1,16 +1,16 @@
 import { Command } from "commander";
-import parseOpenAPI, { parseSchemaSource, validateSchema } from "./parser.js";
+import { parseSchemaSource, validateSchema } from "./parser.js";
 import fs from "fs-extra";
 import path from "path";
 import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
-import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, getApiNotFoundResult, loadConfig } from "./index.js";
+import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, loadConfig } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
 import {} from "./helper/json-updater.js";
 import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings, getSchemaType } from "./validate-response.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
-import { logger, emitJsonError, emitCommandError, toErrorMessage } from "./helper/logger.js";
+import { logger, toErrorMessage } from "./helper/logger.js";
 import { filterEndpoints, filterResolvedEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
 import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
@@ -20,22 +20,29 @@ import { collectRequestJsonPaths, collectUpdateRequestKeys, resolveSelectedArtif
 import { prepareMultiOperationRequests, getRequestResponseMetadata } from "./helper/request-preparation.js";
 import { filterArray, getByPath } from "./helper/dotNotation.js";
 import { parseGetOperationFilter } from "./helper/get-operation-filter.js";
+import { buildError, buildSuccess } from "./helper/error-formatter.js";
+import { ErrorCode } from "./helper/error-codes.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
+const url = pkg.repository.url;
 await checkForUpdateOncePerTerminalSession(pkg.version);
 const openapiToSkillsDir = getOpenapiToSkillsDir();
 const program = new Command();
 const silentFlagRequested = process.argv.includes("--silent");
 program.name("openapi-skills")
-    .description("A command‑line tool for working with OpenAPI/Swagger specs. Use it to parse specs into artifacts, explore API endpoints, validate requests, generate typed client metadata, and teach AI agents how to operate the CLI and write API tests and client code.")
+    .description("A command‑line tool for working with OpenAPI/Swagger and GraphQL specs. Use it to parse specs into artifacts, explore API endpoints and root fields, validate requests, generate typed client metadata, and teach AI agents how to operate the CLI and write API tests and client code.")
     .version(pkg.version);
 async function guardApiName(apiName) {
-    const apiNotFound = await getApiNotFoundResult(apiName);
-    if (!apiNotFound) {
+    const apiNames = await listApis().catch(() => []);
+    if (apiNames.includes(apiName)) {
         return true;
     }
-    logger.result(apiNotFound);
-    logger.error(apiNotFound.message);
+    logger.result(buildError(ErrorCode.UNKNOWN_API, {
+        summary: `API '${apiName}' is not installed.`,
+        message: `No API named '${apiName}' was found. Run 'openapi-skills get-api-names' to list installed APIs, or run 'openapi-skills generate <openapi-source>' first.`,
+        context: { api_name: apiName },
+        nextCommand: "openapi-skills get-api-names",
+    }));
     process.exitCode = 1;
     return false;
 }
@@ -62,7 +69,7 @@ program.addHelpText("after", `
 -------------------------------------------------------------------------------
 Copyright © ${yearRange} Tzur Paldi — Powered by Bedekbyte® All rights reserved
 Support: tzur.paldi@outlook.com
-Project: https://www.npmjs.com/package/openapi-skills
+Project: ${url}
 -------------------------------------------------------------------------------
 `);
 program
@@ -86,7 +93,12 @@ program
         logger.info('openapi-skills skill bundle installed');
     }
     catch (err) {
-        logger.error(`Failed to install skill bundle: ${err instanceof Error ? err.message : String(err)}`);
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "Failed to install skill bundle.",
+            message: err instanceof Error ? err.message : String(err),
+            context: { install_path: installPath },
+            nextCommand: "openapi-skills install --skills",
+        }));
         process.exitCode = 1;
     }
 });
@@ -103,22 +115,20 @@ const generateCmd = program
         if (typeof options.validate === "string" && options.validate.length > 0) {
             try {
                 await validateSchema(options.validate);
-                logger.result({
-                    kind: "schema-validation",
+                logger.result(buildSuccess({
                     valid: true,
                     schemaSource: options.validate,
                     message: "Schema is valid",
-                });
+                }, { kind: "schema-validation" }));
                 process.exitCode = 0;
             }
             catch (error) {
-                logger.result({
-                    kind: "schema-validation",
-                    valid: false,
-                    schemaSource: options.validate,
-                    message: "Schema validation failed",
-                    error: toErrorMessage(error),
-                });
+                logger.result(buildError(ErrorCode.SCHEMA_VALIDATION_FAILED, {
+                    summary: "OpenAPI or GraphQL schema is invalid.",
+                    message: `Schema validation failed: ${toErrorMessage(error)}`,
+                    context: { schema_source: options.validate },
+                    nextCommand: `openapi-skills generate ${options.validate}`,
+                }));
                 process.exitCode = 1;
             }
             return;
@@ -147,28 +157,26 @@ const generateCmd = program
 }`,
             ].join("\n");
             logger.warn(warningMessage);
-            logger.result({
-                kind: "generate-warning",
+            logger.result(buildSuccess({
                 apiName,
                 openapiSource,
                 warning: warningMessage,
-            });
+            }, { kind: "generate-warning" }));
         }
-        logger.result({
-            kind: "generate-result",
+        logger.result(buildSuccess({
             apiName,
             openapiSource,
             fileCount: 3,
-        });
+        }, { kind: "generate-result" }));
         process.exitCode = 0;
     }
     catch (error) {
-        logger.result({
-            kind: options.validate ? "schema-validation" : "generate-result",
-            valid: false,
-            openapiSource,
-            error: toErrorMessage(error),
-        });
+        logger.result(buildError(options.validate ? ErrorCode.SCHEMA_VALIDATION_FAILED : ErrorCode.API_PARSE_ERROR, {
+            summary: options.validate ? "OpenAPI or GraphQL schema is invalid." : "Failed to parse the provided schema.",
+            message: toErrorMessage(error),
+            context: { openapi_source: openapiSource },
+            nextCommand: options.validate ? `openapi-skills generate ${options.validate}` : `openapi-skills generate ${openapiSource ?? "<openapi-source>"}`,
+        }));
         process.exitCode = 1;
     }
 });
@@ -176,7 +184,7 @@ generateCmd.agentMeta = {
     name: "generate",
     category: "Generation",
     usage: "openapi-skills generate [openapi-source] [--validate <schema>] [--base-url <url>] [--dereference] [--no-progress] [--rename <newName>]",
-    description: "Generate endpoints.json, schemas/, and config.json from an OpenAPI source (file path or URL). This is the required first step for a new spec because most other commands read these parsed artifacts. Use --validate to check a schema and exit. Use --dereference only when the spec has no circular references for superior performance. Use --rename to override the generated API name when the source filename is not the desired output name. Use --no-progress to suppress the progress line.",
+    description: "Parse a source file or URL and generate the API artifacts used by the rest of the CLI. Use --validate to check a schema and exit, --base-url to set the API base URL, --dereference when full dereferencing is appropriate, --rename to override the generated API name, and --no-progress to suppress progress output.",
     arguments: [
         { name: "openapi-source", type: "path|url", required: false, positional: true, description: "OpenAPI source file path or URL." },
         { name: "validate", type: "path|url", required: false, flag: true, description: "Validate an OpenAPI schema and exit." },
@@ -211,17 +219,17 @@ generateCmd.agentMeta = {
 };
 const listCmd = program
     .command("list")
-    .description("List summarized endpoint objects for the specified API as JSON. Supports --filter, --resolved/--dereferenced, --index slicing, and --count for endpoint totals. Also supports OpenAPI‑only options (--path, --method) and the GraphQL‑only option (--root-type). At least one filter is required unless --index : is used intentionally. GraphQL APIs reject --method and --path, and OpenAPI APIs reject --root-type.")
+    .description("List summarized operation objects for the specified API as JSON. Supports --filter, --resolved/--dereferenced, --index slicing, and --count for operation totals. Also supports OpenAPI‑only options (--path, --method) and the GraphQL‑only option (--root-type). At least one filter is required unless --index : is used intentionally. GraphQL APIs reject --method and --path, and OpenAPI APIs reject --root-type.")
     .requiredOption("--api <apiName>", "API name to use")
-    .option("--count", "Return the number of endpoints after applying any list filters and index slicing. With no filters, returns the total endpoint count.")
-    .option("--resolved, --dereferenced", "Show only endpoints that already have generated schema details saved.")
+    .option("--count", "Return the number of operations after applying any list filters and index slicing. With no filters, returns the total operation count.")
+    .option("--resolved, --dereferenced", "Show only operations that already have generated schema details saved.")
     .option("--path <path>", [
-    "Filter endpoints by path structure. Repeatable; multiple values are ANDed.",
+    "Filter operations by path structure. Repeatable; multiple values are ANDed.",
     "Supports:",
-    "  - Path prefix: /users (matches endpoints whose path begins with /users)",
-    "  - Parameter detection: :param (matches endpoints with any {param} in the path)",
-    "  - Segment matching: 'store order' (matches endpoints whose path contains BOTH 'store' AND 'order' as segments, in any order)",
-    "  - OR within a clause: 'store|shop' (matches endpoints whose path contains EITHER 'store' OR 'shop')",
+    "  - Path prefix: /users (matches operations whose path begins with /users)",
+    "  - Parameter detection: :param (matches operations with any {param} in the path)",
+    "  - Segment matching: 'store order' (matches operations whose path contains BOTH 'store' AND 'order' as segments, in any order)",
+    "  - OR within a clause: 'store|shop' (matches operations whose path contains EITHER 'store' OR 'shop')",
     "  - Combined AND+OR: 'store order|shop item' (matches endpoints with both 'store' and 'order', OR both 'shop' and 'item')",
     "  - Multiple --path flags are ANDed: --path /store --path order (matches endpoints starting with /store AND containing 'order')",
     "",
@@ -235,8 +243,8 @@ const listCmd = program
     const values = Array.isArray(previous) ? previous : previous ? [previous] : [];
     return [...values, value];
 })
-    .option("--filter <filterPattern>", "Filter endpoints by any of their searchable properties. Supports AND/OR (use spaces for AND, | for OR), e.g. --filter 'create account|register user'.")
-    .option("--method <method>", "Filter endpoints by HTTP method (GET, POST, etc). Use this for OpenAPI endpoints.")
+    .option("--filter <filterPattern>", "Filter operations by any of their searchable properties. Supports AND/OR (use spaces for AND, | for OR), e.g. --filter 'create account|register user'.")
+    .option("--method <method>", "Filter operations by HTTP method (GET, POST, etc). Use this for OpenAPI operations.")
     .option("--root-type <rootType>", "Filter GraphQL root fields by root type (query, mutation, or subscription).")
     .option("--index <range>", "Slice the filtered results with inclusive Python-like range syntax, e.g. 0:10, 5:, :10, -1, or :")
     .action(async (options) => {
@@ -259,57 +267,51 @@ const listCmd = program
         if (typeof options.rootType === "string")
             filterOpts.rootType = options.rootType;
         if (schemaType === "graphql" && (typeof options.method === "string" || typeof options.path === "string")) {
-            logger.result({
-                kind: "endpoint-list-error",
-                apiName,
-                valid: false,
-                schemaType,
-                error: "--method and --path are only valid for OpenAPI APIs.",
-            });
-            logger.error("--method and --path are only valid for OpenAPI APIs.");
+            logger.result(buildError(ErrorCode.SCHEMA_TYPE_MISMATCH, {
+                summary: "--method and --path are only valid for OpenAPI APIs.",
+                message: "This API is GraphQL. Use --root-type with --filter instead.",
+                context: { api_name: apiName, schema_type: schemaType },
+                nextCommand: `openapi-skills list --api ${apiName} --root-type query`,
+            }));
             process.exitCode = 2;
             return;
         }
         if (schemaType === "openapi" && typeof options.rootType === "string") {
-            logger.result({
-                kind: "endpoint-list-error",
-                apiName,
-                valid: false,
-                schemaType,
-                error: "--root-type is only valid for GraphQL APIs.",
-            });
-            logger.error("--root-type is only valid for GraphQL APIs.");
+            logger.result(buildError(ErrorCode.SCHEMA_TYPE_MISMATCH, {
+                summary: "--root-type is only valid for GraphQL APIs.",
+                message: "This API is OpenAPI. Use --method and --path or --filter instead.",
+                context: { api_name: apiName, schema_type: schemaType },
+                nextCommand: `openapi-skills list --api ${apiName} --method GET`,
+            }));
             process.exitCode = 2;
             return;
         }
         if (!options.count && !hasFilter) {
-            logger.result({
-                kind: "endpoint-list-warning",
-                apiName,
-                valid: false,
-                message: "The list command requires at least one filter to avoid returning a large, unbounded result set. Use --path, --filter, --method, --root-type, or --index to narrow the results. Use --path and --method for OpenAPI and --root-type for GraphQL. To intentionally return the full object, use '--index : '.",
-                suggestedFlags: ["--path", "--filter", "--method", "--root-type", "--index <range>"],
-            });
+            logger.result(buildError(ErrorCode.MISSING_FILTER_ARGUMENT, {
+                summary: "No filter provided. Use --path, --filter, --method, --root-type, or --index.",
+                message: "The list command requires at least one filter to avoid returning large, unbounded result sets.",
+                context: { api_name: apiName },
+                nextCommand: `openapi-skills list --api ${apiName} --index :`,
+                severity: "warning",
+            }));
             process.exitCode = 0;
             return;
         }
         if (fs.existsSync(endpointsPath) === false) {
             if (options.count) {
-                logger.result({
-                    kind: "endpoint-count",
-                    apiName,
+                logger.result(buildSuccess({
                     count: 0,
-                    message: `No endpoints.json found for API "${apiName}". Generate the API first with: openapi-skills generate <openapi-source> [options]`
-                });
+                    message: `No endpoints.json found for API "${apiName}".`,
+                }, { kind: "endpoint-count" }));
                 return;
             }
-            logger.result({
-                ok: false,
-                error: {
-                    type: "NoEndpointsFound",
-                    message: `No endpoints found for "${apiName}". Run 'openapi-skills generate <openapi-source> [options]' to generate this API.`
-                }
-            });
+            logger.result(buildError(ErrorCode.NO_ENDPOINTS_FOUND, {
+                summary: `No endpoints.json found for API "${apiName}".`,
+                message: `The API has not been parsed yet. Run 'openapi-skills generate' to create it.`,
+                context: { api_name: apiName },
+                nextCommand: `openapi-skills generate <openapi-source> --rename ${apiName}`,
+                reason: "The API artifacts have not been generated.",
+            }));
             logger.warn(`No endpoints found for "${apiName}". This API name may be misspelled or not generated yet. (openapi-skills generate <openapi-source> [options])`);
             return;
         }
@@ -320,15 +322,17 @@ const listCmd = program
         }
         filtered = sliceEndpointsByIndex(filtered, options.index);
         if (options.count) {
-            logger.result({
-                kind: "endpoint-count",
-                apiName,
+            logger.result(buildSuccess({
                 count: filtered.length,
-            });
+                apiName,
+            }, { kind: "endpoint-count" }));
             return;
         }
         if (filtered.length === 0) {
-            logger.result([]);
+            logger.result(buildSuccess({
+                apiName,
+                items: [],
+            }, { kind: "endpoint-list" }));
             if (options.path || options.filter || options.method || options.rootType || options.index || resolveRequested) {
                 const pathValue = Array.isArray(options.path) ? options.path.join(", ") : options.path;
                 const pathMsg = pathValue ? `path "${pathValue}"` : "";
@@ -342,15 +346,17 @@ const listCmd = program
             }
             return;
         }
-        logger.result(filtered);
+        logger.result(buildSuccess({
+            apiName,
+            items: filtered,
+        }, { kind: "endpoint-list" }));
     }
     catch (error) {
-        logger.result({
-            kind: "endpoint-list",
-            apiName,
-            valid: false,
-            error: toErrorMessage(error),
-        });
+        logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+            summary: "Error listing endpoints.",
+            message: toErrorMessage(error),
+            context: { api_name: apiName },
+        }));
         process.exitCode = 1;
     }
 });
@@ -359,20 +365,19 @@ listCmd.agentMeta = {
     category: "Navigation",
     usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--method <method>] [--root-type <rootType>] [--index <range>]",
     description: [
-        "List endpoint summaries for the specified API as JSON, preserving only operationId, method, path, summary, and description.",
-        "At least one filter is required to list endpoints. --index is treated as a filter input as well, so the command can run when only an index slice is provided. When no filter is supplied, the command returns a structured warning payload instead of the full endpoint array.",
-        "Use --count to return the number of endpoints after applying any list filters and index slicing. When no filters are supplied, it returns the total endpoint count and still emits a JSON count object instead of endpoint summaries.",
-        "Use --resolved (alias --dereferenced) to show only endpoints that already have generated schema details saved.",
-        "Filtering can focus the results of very long endpoint lists. Use --path for advanced path matching, --filter for keywords across OpenAPI and GraphQL endpoint fields, --method for OpenAPI HTTP methods, --root-type for GraphQL root types, --resolved for schema-ready endpoints, and --index to slice the result list. Filtering is case-insensitive and supports:",
-        "- Path prefix: --path '/users' (matches endpoints whose path begins with the prefix)",
-        "- Parameter detection: --path :param (matches endpoints that contain at least one '{...}' path placeholder)",
+        "List operation summaries for a parsed API as JSON.",
+        "At least one filter is required. --index is treated as a filter input, so the command can run when only a slice is requested.",
+        "Use --count to return the number of operations after filtering and slicing, or --resolved to show only operations that already have generated schema details saved.",
+        "Filter usage differs by schema type: use --method and --path for OpenAPI operations, use --root-type for GraphQL root fields, and use --filter and --index with either schema. Filtering is case-insensitive and supports:",
+        "- Path prefix: --path '/users' (matches operations whose path begins with the prefix)",
+        "- Parameter detection: --path :param (matches operations that contain at least one '{...}' path placeholder)",
         "- Segment matching: --path 'store order' (matches endpoints whose path contains both segments)",
         "- OR within a single path clause: --path 'store|shop' (matches either segment)",
         "- Multiple path flags are ANDed: --path /store --path order",
-        "- Simple substring filtering: --filter 'user account' (matches endpoints containing both 'user' and 'account' in any field, including GraphQL name/rootType fields)",
-        "- OR filtering: --filter 'create|register|signup' (matches any endpoint containing any of the words)",
-        "- Combined AND+OR: --filter 'create account|register user' (matches endpoints containing both 'create' and 'account', OR both 'register' and 'user')",
-        "- Path substring search: --filter '/users' (matches endpoints whose path contains the substring)",
+        "- Simple substring filtering: --filter 'user account' (matches operations containing both 'user' and 'account' in any field, including GraphQL name/rootType fields)",
+        "- OR filtering: --filter 'create|register|signup' (matches any operation containing any of the words)",
+        "- Combined AND+OR: --filter 'create account|register user' (matches operations containing both 'create' and 'account', OR both 'register' and 'user')",
+        "- Path substring search: --filter '/users' (matches operations whose path contains the substring)",
         "- OperationId: --filter 'getUser' (matches operationId field)",
         "- Summary/description: --filter 'delete permanently'",
         "- Method filtering: --method GET (OpenAPI only; can be combined with --path and/or --filter)",
@@ -393,18 +398,17 @@ listCmd.agentMeta = {
         "      --index :     (all items)",
         "      --count       (return the filtered/sliced endpoint count, or the total count when no filters are used)",
         "\n",
-        "Use --path when you want path-aware matching. Use --filter when you want substring matching across path, operationId/name, rootType, summary, or description. Use --method for OpenAPI endpoints and --root-type for GraphQL endpoints.",
-        "Use --count when a user asks for the number of endpoints, such as 'count the endpoints for apiName' or 'how many endpoints does apiName have?'. The count should reflect the same path/filter/method/rootType/index criteria applied to list output.",
-        "If no endpoints match, outputs [] and prints a message to stderr."
+        "Use --path for path-aware matching. Use --filter for substring matching across path, operationId/name, rootType, summary, or description.",
+        "If no operations match, outputs [] and prints a message to stderr."
     ].join("\n"),
     arguments: [
         { name: "api", type: "string", required: true, flag: true, description: "API name to use." },
-        { name: "count", type: "flag", required: false, flag: true, description: "Return the number of endpoints after filtering and slicing." },
-        { name: "resolved", type: "flag", required: false, flag: true, description: "Show only endpoints that already have generated schema details saved. Alias: --dereferenced." },
-        { name: "path", type: "string[]", required: false, flag: true, description: "Filter endpoints by path structure." },
-        { name: "filter", type: "string", required: false, flag: true, description: "Filter endpoints by keywords, operationId/name, rootType, path, summary, or description." },
-        { name: "method", type: "string", required: false, flag: true, description: "Filter OpenAPI endpoints by HTTP method." },
-        { name: "rootType", type: "string", required: false, flag: true, description: "Filter GraphQL endpoints by root type (query, mutation, or subscription)." },
+        { name: "count", type: "flag", required: false, flag: true, description: "Return the number of operations after filtering and slicing." },
+        { name: "resolved", type: "flag", required: false, flag: true, description: "Show only operations that already have generated schema details saved. Alias: --dereferenced." },
+        { name: "path", type: "string[]", required: false, flag: true, description: "Filter operations by path structure." },
+        { name: "filter", type: "string", required: false, flag: true, description: "Filter operations by keywords, operationId/name, rootType, path, summary, or description." },
+        { name: "method", type: "string", required: false, flag: true, description: "Filter OpenAPI operations by HTTP method." },
+        { name: "rootType", type: "string", required: false, flag: true, description: "Filter GraphQL operations by root type (query, mutation, or subscription)." },
         { name: "index", type: "string", required: false, flag: true, description: "Slice the filtered results with inclusive Python-like range syntax." }
     ],
     examples: [
@@ -424,7 +428,7 @@ listCmd.agentMeta = {
     ],
     returns: {
         type: "json",
-        description: "Returns JSON output. When filters are provided, returns a JSON array of filtered endpoint summaries. When --count is used, returns a JSON object containing only the count. When no filters are provided, returns a structured JSON warning object instead of endpoint data."
+        description: "Returns filtered operation summaries as JSON, or a count object when --count is used. When no filters are provided, returns a structured warning object."
     },
     sideEffects: {
         writesFiles: false,
@@ -442,7 +446,7 @@ const genClientSchemaCmd = program
     .command("generate-client-schema <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--force", "Overwrite the cached <operationId> artifact file before generating metadata.")
-    .description("Return structured metadata for client code generation for a specific endpoint. Use --force to overwrite the cached <operationId> artifact file before reading it.")
+    .description("Return structured metadata for client code generation for a specific operation. Use --force to overwrite the cached <operationId> artifact file before reading it.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     if (!(await guardApiName(apiName))) {
@@ -451,15 +455,15 @@ const genClientSchemaCmd = program
     try {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const schema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId, options.force === true);
-        logger.result(schema);
+        logger.result(buildSuccess(schema, { kind: "client-schema" }));
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.result({
-            error: "Error generating client code metadata",
-            details: message,
-        });
-        logger.error(`Error generating client code metadata: ${error instanceof Error ? error.message : String(error)}`);
+        logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+            summary: "Error generating client code metadata.",
+            message,
+            context: { api_name: apiName, operation_id: operationId },
+        }));
         process.exitCode = 1;
     }
 });
@@ -467,9 +471,9 @@ genClientSchemaCmd.agentMeta = {
     name: "generate-client-schema",
     category: "Code Generation",
     usage: "openapi-skills generate-client-schema <operationId> --api <apiName> [--force]",
-    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Works for all endpoints. Returns `response: null` for endpoints with no JSON response body (e.g., DELETE operations) — generate `Promise<void>` as the return type in that case. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before generating output.",
+    description: "Print structured metadata optimized for client code generation as pretty-printed JSON. Returns `response: null` for operations with no JSON response body, in which case the generated client should return `Promise<void>`. The cached artifact is reused unless --force is provided.",
     arguments: [
-        { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the endpoint to inspect." },
+        { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the operation to inspect." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "force", type: "flag", required: false, flag: true, description: "Overwrite the cached artifact file before generating metadata." }
     ],
@@ -497,7 +501,7 @@ const describeCmd = program
     .command("describe <operationId>")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--force", "Overwrite the cached <operationId> artifact file before printing the raw schema.")
-    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.")
+    .description("describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific operation as JSON, including all parameters, request body, and all response codes. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.")
     .action(async (operationId, options) => {
     const apiName = options.api;
     if (!(await guardApiName(apiName))) {
@@ -506,19 +510,20 @@ const describeCmd = program
     try {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const schema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, options.force === true);
-        logger.result({
-            kind: "describe-result",
-            apiName,
+        logger.result(buildSuccess({
             operationId,
-            warnings: ["describe → fallback for generate-client-schema. Use openapi-skills generate-client-schema first for client code generation. Use describe only when you need the full raw schema detail."],
+            warnings: ["describe → fallback for generate-client-schema. Use openapi-skills generate-client-schema first for client code generation."],
             schema,
-        });
+        }, { kind: "describe-result" }));
         return;
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        emitJsonError("Error describing endpoint", message);
-        emitCommandError("Error describing endpoint", message);
+        logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+            summary: "Error describing operation.",
+            message,
+            context: { api_name: apiName, operation_id: operationId },
+        }));
         process.exitCode = 1;
         return;
     }
@@ -528,9 +533,9 @@ describeCmd.agentMeta = {
     category: "Navigation",
     usage: "openapi-skills describe <operationId> --api <apiName> [--force]",
     description: [
-        "describe → fallback for generate-client-schema. Use generate-client-schema first. Prints the complete raw schema for a specific endpoint as JSON, including all parameters, request body, and all response codes. The cached <operationId> artifact file is reused unless --force is provided, which overwrites the cached schema from the bundled API document before output.",
+        "Fallback for generate-client-schema. Prints the complete raw schema for a specific operation as JSON, including all parameters, request body, and response codes. The cached artifact is reused unless --force is provided.",
         "",
-        "**Agents MUST use `generate-client-schema` for client code generation. Use `describe` only as a fallback when you need full raw schema detail beyond what `generate-client-schema` provides, or when `generate-client-schema` is insufficient.**"
+        "**Agents MUST use `generate-client-schema` for client code generation. Use `describe` only when you need full raw schema detail beyond what `generate-client-schema` provides.**"
     ].join("\n"),
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId of the endpoint to describe." },
@@ -576,24 +581,36 @@ const getOperationCmd = program
     const selection = resolveSelectedArtifact(options);
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     if (selection.error || !selection.artifactName) {
-        logger.error(selection.error ?? "Invalid operation artifact selection.");
+        logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+            summary: "Invalid operation artifact selection.",
+            message: selection.error ?? "Invalid operation artifact selection.",
+            context: { api_name: apiName, operation_id: operationId },
+            nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --request`,
+        }));
         process.exitCode = 1;
         return;
     }
     const artifactPath = getOperationArtifactPath(apiName, sanitizedOperationId, selection.artifactName);
     if (!(await fs.pathExists(artifactPath))) {
-        logger.error(`Artifact not found: ${selection.artifactName}`);
         if (selection.artifactName === "response-schema") {
-            logger.result({
-                kind: "no-response-schema",
-                apiName,
-                operationId,
-                error: "NoResponseSchema",
-                message: "No response schema artifact found for this operation. Make a request first to generate the artifact."
-            });
+            logger.result(buildError(ErrorCode.NO_RESPONSE_SCHEMA, {
+                summary: "No response schema artifact exists for this operation.",
+                message: "The response schema has not been created yet.",
+                context: { api_name: apiName, operation_id: operationId, artifact_type: "response-schema" },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName}`,
+                reason: "Make a request first to generate the response-schema artifact.",
+            }));
             process.exitCode = 1;
             return;
         }
+        logger.result(buildError(ErrorCode.REQUEST_TEMPLATE_STALE, {
+            summary: `Artifact '${selection.artifactName}' is missing for this operation.`,
+            message: `The '${selection.artifactName}' artifact does not exist yet.`,
+            context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName },
+            nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+        }));
+        process.exitCode = 1;
+        return;
     }
     try {
         let artifact = await fs.readJson(artifactPath);
@@ -605,18 +622,18 @@ const getOperationCmd = program
         if (hasGet && !hasFilter) {
             const { sizeBytes } = getJsonOutputSize(selectedValue);
             if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
-                logger.result({
-                    kind: "oversized-output",
-                    apiName,
-                    artifactType: selection.artifactName,
-                    operation: "--get",
-                    sizeBytes,
-                    maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
-                    message: "Output is too large. Use --filter or --get to reduce output."
-                });
+                logger.result(buildError(ErrorCode.OVERSIZED_OUTPUT, {
+                    summary: "Output is too large to display.",
+                    message: `The selected value is ${sizeBytes} bytes, exceeding the limit of ${MEDIUM_OUTPUT_MAX_BYTES} bytes.`,
+                    context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, size_bytes: sizeBytes },
+                    nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --get ${getPath} --filter count`,
+                }));
             }
             else {
-                logger.result(selectedValue);
+                logger.result(buildSuccess({
+                    apiName,
+                    value: selectedValue,
+                }, { kind: "artifact-value" }));
             }
             return;
         }
@@ -635,35 +652,28 @@ const getOperationCmd = program
             const parsedFilter = parseGetOperationFilter(filterExpr);
             let result;
             if (parsedFilter.kind === "count" || parsedFilter.kind === "index" || parsedFilter.kind === "range") {
-                const message = "--filter requires the target to be an array. Use --response-schema first to inspect the response shape, then use --get to narrow the value before filtering.";
                 if (!Array.isArray(artifactToFilter)) {
                     if (arrayFields.length === 1) {
                         artifactToFilter = arrayFields[0];
                     }
                     else {
-                        logger.result({
-                            kind: "get-operation-artifact-filter-error",
-                            apiName,
-                            message,
-                            selection: selection.artifactName,
-                            filter: filterExpr,
-                            selectedPath: hasGet ? getPath : undefined,
-                        });
-                        logger.error(message);
+                        logger.result(buildError(ErrorCode.INVALID_FILTER_SYNTAX, {
+                            summary: "--filter requires the target to be an array.",
+                            message: `The selected value is not an array and contains no single array field to unwrap.`,
+                            context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, filter: filterExpr, selected_path: hasGet ? getPath : undefined },
+                            nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --response-schema`,
+                        }));
                         process.exitCode = 1;
                         return;
                     }
                 }
                 if (!Array.isArray(artifactToFilter)) {
-                    logger.result({
-                        kind: "get-operation-artifact-filter-error",
-                        apiName,
-                        message,
-                        selection: selection.artifactName,
-                        filter: filterExpr,
-                        selectedPath: hasGet ? getPath : undefined,
-                    });
-                    logger.error(message);
+                    logger.result(buildError(ErrorCode.INVALID_FILTER_SYNTAX, {
+                        summary: "--filter requires the target to be an array.",
+                        message: `The selected value is not an array.`,
+                        context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, filter: filterExpr, selected_path: hasGet ? getPath : undefined },
+                        nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName}`,
+                    }));
                     process.exitCode = 1;
                     return;
                 }
@@ -683,77 +693,85 @@ const getOperationCmd = program
                 const rawValue = parsedFilter.value;
                 let expectedValue = rawValue;
                 if (hasGet && !Array.isArray(artifactToFilter)) {
-                    logger.result({
-                        kind: "get-operation-artifact-filter-error",
-                        apiName,
-                        message: "--filter requires the --get result to be an array. Use --response-schema first to inspect the response shape, then use --get to narrow the value before filtering.",
-                        selection: selection.artifactName,
-                        filter: filterExpr,
-                        selectedPath: getPath,
-                    });
-                    logger.error("--filter requires the --get result to be an array. Use --response-schema first to inspect the response shape, then use --get to narrow the value before filtering.");
+                    logger.result(buildError(ErrorCode.INVALID_FILTER_SYNTAX, {
+                        summary: "--filter requires the --get result to be an array.",
+                        message: `The value at path '${getPath}' is not an array.`,
+                        context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, filter: filterExpr, selected_path: getPath },
+                        nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --response-schema`,
+                    }));
                     process.exitCode = 1;
                     return;
                 }
                 if (!Array.isArray(artifactToFilter)) {
                     const { sizeBytes } = getJsonOutputSize(artifactToFilter);
                     if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
-                        logger.result({
-                            kind: "oversized-output",
-                            apiName,
-                            artifactType: selection.artifactName,
-                            operation: "--filter",
-                            sizeBytes,
-                            maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
-                            message: "Output is too large. Use --filter or --get to reduce output."
-                        });
+                        logger.result(buildError(ErrorCode.OVERSIZED_OUTPUT, {
+                            summary: "Output is too large to display.",
+                            message: `The selected value is ${sizeBytes} bytes, exceeding the limit of ${MEDIUM_OUTPUT_MAX_BYTES} bytes.`,
+                            context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, size_bytes: sizeBytes },
+                            nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --filter count`,
+                        }));
                     }
                     else {
-                        logger.result(artifactToFilter);
+                        logger.result(buildSuccess({
+                            apiName,
+                            value: artifactToFilter,
+                        }, { kind: "artifact-value" }));
                     }
                     return;
                 }
                 result = filterArray(artifactToFilter, filterPath, expectedValue);
             }
             else {
-                logger.error("--filter must use count, index, range, or <path>=<value> syntax.");
+                logger.result(buildError(ErrorCode.INVALID_FILTER_SYNTAX, {
+                    summary: "Invalid --filter syntax.",
+                    message: "--filter must use count, index, range, or <path>=<value> syntax.",
+                    context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, filter: filterExpr },
+                    nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --filter 0`,
+                }));
                 process.exitCode = 1;
                 return;
             }
             const { sizeBytes } = getJsonOutputSize(result);
             if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
-                logger.result({
-                    kind: "oversized-output",
-                    apiName,
-                    artifactType: selection.artifactName,
-                    operation: "--filter",
-                    sizeBytes,
-                    maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
-                    message: "Output is too large. Use --filter or --get to reduce output."
-                });
+                logger.result(buildError(ErrorCode.OVERSIZED_OUTPUT, {
+                    summary: "Output is too large to display.",
+                    message: `The filtered result is ${sizeBytes} bytes, exceeding the limit of ${MEDIUM_OUTPUT_MAX_BYTES} bytes.`,
+                    context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, size_bytes: sizeBytes },
+                    nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --filter count`,
+                }));
             }
             else {
-                logger.result(result);
+                logger.result(buildSuccess({
+                    apiName,
+                    value: result,
+                }, { kind: "artifact-value" }));
             }
             return;
         }
         const { sizeBytes } = getJsonOutputSize(artifact);
         if (sizeBytes >= MEDIUM_OUTPUT_MAX_BYTES) {
-            logger.result({
-                kind: "oversized-output",
-                apiName,
-                artifactType: selection.artifactName,
-                sizeBytes,
-                maxBytes: MEDIUM_OUTPUT_MAX_BYTES,
-                message: "Output is too large. Use `get-operation-artifact [--filter <expr>|--get <path>] <operationId>` to reduce output."
-            });
+            logger.result(buildError(ErrorCode.OVERSIZED_OUTPUT, {
+                summary: "Output is too large to display.",
+                message: `The artifact is ${sizeBytes} bytes, exceeding the limit of ${MEDIUM_OUTPUT_MAX_BYTES} bytes.`,
+                context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName, size_bytes: sizeBytes },
+                nextCommand: `openapi-skills get-operation ${operationId} --api ${apiName} --${selection.artifactName} --get <path> --filter count`,
+            }));
         }
         else {
-            logger.result(artifact);
+            logger.result(buildSuccess({
+                apiName,
+                operationId,
+                artifact,
+            }, { kind: "artifact" }));
         }
     }
     catch (error) {
-        logger.error(`Failed to read artifact ${selection.artifactName}: ${toErrorMessage(error)}`);
+        logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+            summary: `Failed to read artifact '${selection.artifactName}'.`,
+            message: toErrorMessage(error),
+            context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName },
+        }));
         process.exitCode = 1;
     }
 });
@@ -761,7 +779,7 @@ getOperationCmd.agentMeta = {
     name: "get-operation",
     category: "Navigation",
     usage: "openapi-skills get-operation|get-operation-artifact <operationId> --api <apiName> [--request] [--response] [--response-schema] [--get <path>] [--filter count|<index>|<range>|<path>=<value>]",
-    description: "Return a stored operation artifact created by `openapi-skills request` as raw JSON. Run `request` for the same operationId first so the artifact exists. The first example shows that prerequisite request step. Select path first with --get, then use --filter to return an array count, item, slice, or path/value match. Use --response-schema first when the response shape is unknown. Exactly one of --request, --response, or --response-schema is required. New --filter modes only work when the selected target is an array. Alias: `get-operation-artifact`.",
+    description: "Return a stored operation artifact created by `openapi-skills request` as raw JSON. Run `request` first so the artifact exists. Use --get to select a nested value, then --filter to count, slice, or match values. Use --response-schema first when the response shape is unknown. Exactly one of --request, --response, or --response-schema is required. Alias: `get-operation-artifact`.",
     arguments: [
         { name: "operationId", type: "string", required: true, positional: true, description: "The operationId whose stored artifact should be returned." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
@@ -804,7 +822,7 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific endpoint, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact; only flattened object dot-notation keys are allowed), --header (add headers).")
+    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact; only flattened object dot-notation keys are allowed), --header (add headers).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists.")
     .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
@@ -836,28 +854,32 @@ const requestCmd = program
     if (operationIds.length > 1) {
         try {
             const { summaryText, payload } = await prepareMultiOperationRequests(apiName, operationIds, options.force === true);
-            logger.result(`${summaryText}\n`);
+            logger.result(buildSuccess({
+                summary: summaryText,
+                operationIds,
+                apiName,
+            }, { kind: "request-prepare" }));
             process.exitCode = 0;
         }
         catch (error) {
             const message = toErrorMessage(error);
-            const payload = {
-                kind: "request-result",
-                apiName,
-                preparedOnly: true,
-                operationIds,
-                valid: false,
-                error: message,
-            };
-            logger.result(payload);
-            logger.error(`Prepare-only request error for ${apiName}: ${message}`);
+            logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+                summary: "Failed to prepare multi-operation request scenario.",
+                message,
+                context: { api_name: apiName, operation_ids: operationIds },
+            }));
             process.exitCode = 1;
         }
         return;
     }
     const operationId = operationIds[0];
     if (!operationId) {
-        logger.error("An operationId is required.");
+        logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+            summary: "An operationId is required.",
+            message: "Provide at least one operationId to invoke.",
+            context: { api_name: apiName },
+            nextCommand: `openapi-skills request <operationId> --api ${apiName}`,
+        }));
         process.exitCode = 1;
         return;
     }
@@ -870,12 +892,22 @@ const requestCmd = program
         }
         catch (err) {
             const message = `Invalid JSON for --update-request: ${err instanceof Error ? err.message : String(err)}`;
-            logger.error(message);
+            logger.result(buildError(ErrorCode.INVALID_UPDATE_REQUEST_JSON, {
+                summary: "--update-request JSON is malformed.",
+                message,
+                context: { api_name: apiName, operation_id: operationId, update_request: options.updateRequest },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --update-request '{\"field.path\":\"value\"}'`,
+            }));
             process.exitCode = 2;
             return;
         }
         if (typeof updates !== "object" || Array.isArray(updates) || !updates || Object.keys(updates).length === 0) {
-            logger.error("--update-request must be a non-empty JSON object (use flattened dot-notation keys). Example: --update-request '{\"field.path\":value}'");
+            logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+                summary: "--update-request must be a non-empty JSON object.",
+                message: "Use flattened dot-notation keys and provide at least one update.",
+                context: { api_name: apiName, operation_id: operationId, update_request: options.updateRequest },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --update-request '{\"field.path\":\"value\"}'`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -900,7 +932,12 @@ const requestCmd = program
             await prepareRequestTemplate(apiName, sanitizedOperationId, true);
         }
         else if (!(await fs.pathExists(requestJsonPath))) {
-            logger.error("--update-request requires an existing request.json artifact. Use --force to regenerate the request template.");
+            logger.result(buildError(ErrorCode.REQUEST_TEMPLATE_STALE, {
+                summary: "request.json does not exist for this operation.",
+                message: "--update-request requires an existing request.json artifact. Use --force to regenerate the request template.",
+                context: { api_name: apiName, operation_id: operationId, artifact_type: "request" },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force --update-request '{\"field.path\":\"value\"}'`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -909,7 +946,12 @@ const requestCmd = program
         const updateKeys = collectUpdateRequestKeys(updates);
         const missingKeys = Array.from(updateKeys).filter(key => !requestJsonKeys.has(key));
         if (missingKeys.length > 0) {
-            logger.error(`--update-request contains keys not present in request.json: ${missingKeys.join(", ")}.`);
+            logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+                summary: "--update-request contains keys not present in request.json.",
+                message: `The following keys are missing from request.json: ${missingKeys.join(", ")}.`,
+                context: { api_name: apiName, operation_id: operationId, update_request: options.updateRequest, missing_keys: missingKeys },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -931,8 +973,12 @@ const requestCmd = program
         }
         catch (err) {
             const message = "Invalid --header JSON. Example: --header '{\"X-Api-Key\":\"abc\"}'";
-            logger.result(message);
-            logger.error(message);
+            logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+                summary: "--header JSON is malformed.",
+                message,
+                context: { header: options.header },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --header '{"Header-Name":"value"}'`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -941,8 +987,23 @@ const requestCmd = program
         try {
             const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
             const metadata = getRequestResponseMetadata(apiName, operationId);
-            logger.result({
-                kind: "validation-result",
+            if (!result.valid) {
+                logger.result(buildError(ErrorCode.VALIDATION_FAILED, {
+                    summary: "Response validation failed.",
+                    message: (result.errors ?? []).join("; ") || "The response did not match the expected schema.",
+                    context: {
+                        api_name: apiName,
+                        operation_id: operationId,
+                        validation_warnings: result.warnings ?? [],
+                        validation_errors: result.errors ?? [],
+                        operation_artifact_count: metadata.fileCount,
+                    },
+                    nextCommand: `openapi-skills request ${operationId} --api ${apiName} --validate`,
+                }));
+                process.exitCode = 1;
+                return;
+            }
+            logger.result(buildSuccess({
                 apiName,
                 operationId,
                 valid: result.valid,
@@ -950,19 +1011,16 @@ const requestCmd = program
                 errors: result.errors ?? [],
                 operationArtifactCount: metadata.fileCount,
                 retrieveArtifacts: "Use `get-operation-artifact [--request|--response|--response-schema] <operationId>` to view this operation's artifacts."
-            });
-            process.exitCode = result.valid ? 0 : 1;
+            }, { kind: "validation-result" }));
+            process.exitCode = 0;
         }
         catch (error) {
-            logger.result({
-                kind: "validation-result",
-                apiName,
-                operationId,
-                valid: false,
-                errors: [toErrorMessage(error)],
-                warnings: Array.isArray(error?.warnings) ? error.warnings : [],
-            });
-            logger.error(`Validation error for ${apiName} ${operationId}: ${toErrorMessage(error)}`);
+            logger.result(buildError(ErrorCode.VALIDATION_FAILED, {
+                summary: "Validation failed.",
+                message: toErrorMessage(error),
+                context: { api_name: apiName, operation_id: operationId },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --validate`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -972,24 +1030,22 @@ const requestCmd = program
             const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
             await ensureResponseSchema(apiName, operationId);
             const metadata = getRequestResponseMetadata(apiName, operationId);
-            logger.result({
-                kind: "request-result",
+            logger.result(buildSuccess({
                 apiName,
                 operationId,
                 warnings: warnings ?? [],
                 fileCount: metadata.fileCount,
                 retrieveArtifacts: "Use `get-operation-artifact [--request|--response|--response-schema] <operationId>` to view this operation's artifacts."
-            });
+            }, { kind: "request-result" }));
             process.exitCode = 0;
         }
         catch (error) {
-            logger.result({
-                kind: "request-result",
-                apiName,
-                operationId,
-                error: toErrorMessage(error),
-            });
-            logger.error(`Request error for ${apiName} ${operationId}: ${toErrorMessage(error)}`);
+            logger.result(buildError(ErrorCode.REQUEST_FAILED, {
+                summary: "Request failed.",
+                message: toErrorMessage(error),
+                context: { api_name: apiName, operation_id: operationId },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName}`,
+            }));
             process.exitCode = 2;
             return;
         }
@@ -1000,15 +1056,11 @@ requestCmd.agentMeta = {
     category: "Validation",
     usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--header <json>]",
     description: [
-        "Make a live HTTP request for an endpoint, or prepare a multi-step request scenario without executing requests.",
-        "When multiple operationIds are supplied, the command enters prepare-only mode and only refreshes request artifact templates for the scenario.",
-        "Request and Response Artifacts created by the request command never update automatically.",
-        "Each artifact reflects the endpoint or root field exactly as it was when the request ran.",
-        "Artifacts stay unchanged until another request is executed for that same endpoint or root field.",
-        "No other command updates or regenerates request and response artifacts.",
-        "With --validate, validate only the response against the schema after the request is sent. It does not validate the request body or guarantee a response exists.",
-        "With --force, regenerate request artifact from schema defaults. Use it with --update-request when you want the original schema-shaped template before patching, and skip it if you want to keep previous request values. Type mismatch warnings for --update-request are only checked when --force is used, because the regenerated template mirrors the schema.",
-        "With --update-request, patch request artifact before sending using flattened dot-notation keys, such as user.profile.name or parameters.0.id. Nested JSON objects are accepted (they will be flattened and a warning emitted), but the provided value must be valid JSON. Invalid JSON will cause the command to fail. To delete a field, set its value to \"__delete__\" (for example, parameters.0). Use --force when you want to restore defaults and patch in the same run."
+        "Make a live HTTP request for an operation, or prepare a multi-step request scenario without executing requests.",
+        "When multiple operationIds are supplied, the command enters prepare-only mode and refreshes request artifact templates for the scenario.",
+        "With --validate, validate only the response against the schema after the request is sent.",
+        "With --force, regenerate the request artifact from schema defaults.",
+        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. Set a field to \"__delete__\" to remove it."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
@@ -1078,12 +1130,12 @@ const setEnvCmd = program
             auth = parsedAuth;
         }
         catch {
-            logger.result({
-                kind: "set-env-result",
-                apiName,
-                success: false,
-                error: "Invalid --auth JSON. Example: '{\"Authorization\":\"Bearer abc\"}'",
-            });
+            logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+                summary: "--auth JSON is malformed.",
+                message: "Invalid --auth JSON. Example: '{\"Authorization\":\"Bearer abc\"}'",
+                context: { api_name: apiName, auth: options.auth ?? null },
+                nextCommand: `openapi-skills set-env --api ${apiName} --auth '{\"Authorization\":\"Bearer abc\"}'`,
+            }));
             process.exitCode = 1;
             return;
         }
@@ -1093,24 +1145,24 @@ const setEnvCmd = program
     for (const entry of rawVars) {
         const separatorIndex = entry.indexOf("=");
         if (separatorIndex <= 0) {
-            logger.result({
-                kind: "set-env-result",
-                apiName,
-                success: false,
-                error: `Invalid --var value \"${entry}\". Use key=value.`,
-            });
+            logger.result(buildError(ErrorCode.INVALID_VARIABLE_SYNTAX, {
+                summary: "Invalid --var syntax.",
+                message: `Invalid --var value "${entry}". Use key=value.`,
+                context: { api_name: apiName, variable: entry },
+                nextCommand: `openapi-skills set-env --api ${apiName} --var userId=123`,
+            }));
             process.exitCode = 1;
             return;
         }
         const key = entry.slice(0, separatorIndex).trim();
         const value = entry.slice(separatorIndex + 1);
         if (!key) {
-            logger.result({
-                kind: "set-env-result",
-                apiName,
-                success: false,
-                error: `Invalid --var value \"${entry}\". Use key=value.`,
-            });
+            logger.result(buildError(ErrorCode.INVALID_VARIABLE_SYNTAX, {
+                summary: "Invalid --var syntax.",
+                message: `Invalid --var value "${entry}". Use key=value.`,
+                context: { api_name: apiName, variable: entry },
+                nextCommand: `openapi-skills set-env --api ${apiName} --var userId=123`,
+            }));
             process.exitCode = 1;
             return;
         }
@@ -1125,19 +1177,20 @@ const setEnvCmd = program
         if (Object.keys(vars).length > 0)
             configUpdates.vars = vars;
         await updateConfig(apiName, configUpdates);
-        logger.result({
-            kind: "set-env-result",
+        logger.result(buildSuccess({
             apiName,
-            success: true,
-        });
+            baseUrl,
+            hasAuth: auth !== undefined,
+            varCount: Object.keys(vars).length,
+        }, { kind: "set-env-result" }));
     }
     catch (error) {
-        logger.result({
-            kind: "set-env-result",
-            apiName,
-            success: false,
-            error: toErrorMessage(error),
-        });
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "Failed to update API environment.",
+            message: toErrorMessage(error),
+            context: { api_name: apiName, base_url: baseUrl ?? null, var_count: Object.keys(vars).length },
+            nextCommand: `openapi-skills set-env --api ${apiName}`,
+        }));
         process.exitCode = 1;
     }
 });
@@ -1145,7 +1198,7 @@ setEnvCmd.agentMeta = {
     name: "set-env",
     category: "Configuration",
     usage: "openapi-skills set-env --api <apiName> [--base-url <url>] [--auth <json>] [--var key=value]",
-    description: "Set or update the runtime environment for a parsed API. Persists baseUrl, auth headers, and named vars in config.json. Calling set-env again updates only the provided fields, which makes it the single command for switching environments.",
+    description: "Set or update the runtime environment for a parsed API. Persists baseUrl, auth headers, and named vars in config.json.",
     arguments: [
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "base-url", type: "string", required: false, flag: true, description: "Base URL for the API environment." },
@@ -1198,7 +1251,7 @@ const getEnvCmd = program
         const varsEntriesRaw = await getConfigValue(apiName, "vars");
         const varsEntries = Array.isArray(varsEntriesRaw) ? varsEntriesRaw : [];
         const varsObj = Object.fromEntries(varsEntries);
-        const resultPayload = { kind: "get-env-result", apiName };
+        const resultPayload = { apiName };
         if (!wantAny || wantBase)
             resultPayload.baseUrl = baseUrl;
         if (!wantAny || wantAuth)
@@ -1213,17 +1266,16 @@ const getEnvCmd = program
             }).filter(Boolean);
             resultPayload.vars = keys.map(k => [k, varsObj[k]]).filter(([k, v]) => v !== undefined);
         }
-        resultPayload.success = true;
-        logger.result(resultPayload);
+        logger.result(buildSuccess(resultPayload, { kind: "get-env-result" }));
         process.exitCode = 0;
     }
     catch (err) {
-        logger.result({
-            kind: "get-env-result",
-            apiName,
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-        });
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "Failed to read API environment.",
+            message: err instanceof Error ? err.message : String(err),
+            context: { api_name: apiName },
+            nextCommand: `openapi-skills get-env --api ${apiName}`,
+        }));
         process.exitCode = 1;
     }
 });
@@ -1231,7 +1283,7 @@ getEnvCmd.agentMeta = {
     name: "get-env",
     category: "Configuration",
     usage: "openapi-skills get-env --api <apiName>",
-    description: "Read environment configuration for an API. Returns all values by default, or only a specific field when a flag is provided (e.g., `--base-url`, `--auth`, `--var <key>`).",
+    description: "Read environment configuration for an API. Returns all values by default, or only a specific field when a flag is provided.",
     arguments: [
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." }
     ],
@@ -1262,24 +1314,20 @@ const getApiNamesCmd = program
     .action(async () => {
     try {
         const apiNames = await listApis();
-        const payload = {
-            kind: "api-list",
+        logger.result(buildSuccess({
             apiNames,
-        };
-        logger.result(payload);
+        }, { kind: "api-list" }));
         if (!apiNames || apiNames.length === 0) {
             logger.warn("No APIs were generated yet. Run first: openapi-skills generate <openapi-source> [options]");
         }
     }
     catch (error) {
-        logger.result({
-            ok: false,
-            error: {
-                type: "ListApisError",
-                message: "Failed to list APIs. Run `openapi-skills generate [options] [openapi-source]` to parse APIs first."
-            }
-        });
-        logger.error("Error listing APIs: ${error instanceof Error ? error.message : String(error)}. Try running \`openapi-skills generate [options] [openapi-source]\` to parse APIs first.");
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "Failed to list APIs.",
+            message: "Run `openapi-skills generate [options] [openapi-source]` to parse APIs first.",
+            context: {},
+            nextCommand: "openapi-skills generate <openapi-source>",
+        }));
         process.exitCode = 1;
     }
 });
@@ -1287,7 +1335,7 @@ getApiNamesCmd.agentMeta = {
     name: "get-api-names",
     category: "Navigation",
     usage: "openapi-skills get-api-names",
-    description: "List all available API names (parsed OpenAPI bundles) in the project. Output is always JSON: { kind: 'api-list', apiNames: [<apiName>, ...] }. Use this to discover which APIs are available for use with other commands.",
+    description: "List all available parsed API names in the project. Output is always JSON: { kind: 'api-list', apiNames: [<apiName>, ...] }.",
     arguments: [],
     examples: [
         "openapi-skills get-api-names"
@@ -1317,43 +1365,52 @@ const removeApiCmd = program
     try {
         const apiNames = await listApis();
         if (!apiNames.includes(targetApiName)) {
-            const payload = {
-                ok: false,
-                error: {
-                    type: "ApiNotFound",
-                    message: `API '${targetApiName}' is not installed.`,
-                },
-            };
-            logger.result(payload);
-            logger.error(`Remove API error for ${targetApiName}: API '${targetApiName}' is not installed.`);
+            logger.result(buildError(ErrorCode.UNKNOWN_API, {
+                summary: `API '${targetApiName}' is not installed.`,
+                message: `API '${targetApiName}' is not installed.`,
+                context: { api_name: targetApiName },
+                nextCommand: "openapi-skills get-api-names",
+            }));
             process.exitCode = 1;
             return;
         }
         const confirmed = options?.yes === true ? true : await promptDeleteConfirmation(targetApiName);
         if (!confirmed) {
-            logger.result({ ok: false, message: "Cancelled" });
+            logger.result(buildSuccess({ cancelled: true, apiName: targetApiName }, { kind: "remove-api-result" }));
             process.exitCode = 0;
             return;
         }
         const result = await deleteApi(targetApiName);
-        logger.result(result);
         if (result.ok) {
+            logger.result(buildSuccess({
+                removedApi: result.data.removedApi,
+                message: result.message,
+            }, { kind: "remove-api-result" }));
             process.exitCode = 0;
             return;
         }
-        logger.error(`Remove API error for ${targetApiName}: ${result.error.message}`);
+        const errorCode = /config/i.test(result.error.message)
+            ? ErrorCode.CONFIG_ERROR
+            : result.error.type === "ApiNotFound"
+                ? ErrorCode.UNKNOWN_API
+                : ErrorCode.REQUEST_FAILED;
+        logger.result(buildError(errorCode, {
+            summary: `Remove API error for ${targetApiName}.`,
+            message: result.error.message,
+            context: { api_name: targetApiName },
+            nextCommand: errorCode === ErrorCode.UNKNOWN_API ? "openapi-skills get-api-names" : "None",
+        }));
         process.exitCode = 1;
+        return;
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.result({
-            ok: false,
-            error: {
-                type: /config/i.test(message) ? "ConfigError" : "RemoveApiError",
-                message,
-            },
-        });
-        logger.error(`Remove API error for ${targetApiName}: ${message}`);
+        logger.result(buildError(/config/i.test(message) ? ErrorCode.CONFIG_ERROR : ErrorCode.REQUEST_FAILED, {
+            summary: `Remove API error for ${targetApiName}.`,
+            message,
+            context: { api_name: targetApiName },
+            nextCommand: /config/i.test(message) ? "None" : `openapi-skills remove-api ${targetApiName} --yes`,
+        }));
         process.exitCode = 1;
     }
 });
@@ -1385,34 +1442,6 @@ removeApiCmd.agentMeta = {
     },
     filesWritten: ["config.json"]
 };
-const helpCmd = program
-    .command("help")
-    .description("Show a complete overview of the CLI")
-    .action(() => {
-    logger.info("openapi-skills Help");
-    logger.warn("--------------------------------------------------------------------------------------------------------------------");
-    logger.info("Heads up: This command prints structured (machine-friendly) output. For normal help text, use `openapi-skills --help`.");
-    logger.warn("--------------------------------------------------------------------------------------------------------------------\n");
-    const excluded = new Set(["install", "help"]);
-    const filteredCommands = program.commands.filter(cmd => !excluded.has(cmd.name()));
-    logger.result({
-        kind: "help-summary",
-        usage: "openapi-skills help",
-        commandCount: filteredCommands.length,
-        commands: filteredCommands.map(command => ({
-            name: command.agentMeta?.name ?? command.name(),
-            usage: command.agentMeta?.usage ?? command.usage(),
-            description: command.agentMeta?.description ?? command.description(),
-            category: command.agentMeta?.category ?? "",
-            arguments: command.agentMeta?.arguments ?? [],
-            examples: command.agentMeta?.examples ?? [],
-            returns: command.agentMeta?.returns ?? null,
-            sideEffects: command.agentMeta?.sideEffects ?? null,
-            constraints: command.agentMeta?.constraints ?? null,
-            filesWritten: command.agentMeta?.filesWritten ?? [],
-        })),
-    });
-});
 export { program };
 program.parse(process.argv);
 //# sourceMappingURL=cli.js.map

@@ -1,11 +1,11 @@
-# Scenario: Write Client Code for an Endpoint
+# Scenario: Write Client Code for an Operation
 
-**Goal:** Generate TypeScript client code for a specific endpoint using OpenAPI metadata.
+**Goal:** Generate TypeScript client code for a specific operation using schema metadata.
 
 ## Workflow
 
 1. **Ensure API is parsed:** Run `openapi-skills get-api-names` to verify API exists, or run `openapi-skills generate <spec-source> --base-url <url> --no-progress --rename<newApiName>` if needed.
-2. **Find operationId:** Run `openapi-skills list --api <apiName> --method <METHOD> --path <prefix> --filter<pattern> --index<range|position>` to locate the desired endpoint and its `operationId`.
+2. **Find the operation identifier:** Run `openapi-skills list --api <apiName>` with at least one schema-appropriate filter. Use `--method`/`--path` when the schema exposes OpenAPI operations, or `--root-type` when it exposes GraphQL root fields. Use `--filter` and `--index` as needed.
 3. **Get schema:** Run `openapi-skills generate-client-schema <operationId> --api <apiName>` to retrieve structured metadata for code generation.
 4. **Generate client code:** Using the schema output, write the TypeScript client class following the rules in this document.
 
@@ -30,19 +30,19 @@ All generated client code must begin with:
 ```typescript
 /**
  * <API Name> Client
- * Generated from <apiName> OpenAPI schema by openapi-skills.
+ * Generated from <apiName> API schema by openapi-skills.
  */
 ```
 
 Substitute placeholders:
 - `<API Name>`: Human-readable API name (e.g., "Petstore" or "GitHub")
-- `<operationId>`: The endpoint operation ID (e.g., "addPet")
+- `<operationId>`: The operation identifier from the schema (for example, an OpenAPI `operationId` or a GraphQL `name`)
 - `<apiName>`: The parsed API name from config (e.g., "petstore")
 
 ### Class Structure Rules
 
 **Constructor:**
-- Must accept a single `httpClient` parameter implementing the `HttpClient` interface.
+- Must accept a single `httpClient` parameter implementing the `HttpClient` interface (see `http-client.md` for the HttpClient interface definition).
 - Must NOT accept or define `baseUrl`, `authToken`, `apiKey`, or any authentication-related properties.
 - Must include this comment above the constructor:
   ```typescript
@@ -51,7 +51,7 @@ Substitute placeholders:
 - All base URL and authentication handling is delegated to the `httpClient` implementation.
 
 **Methods:**
-- Each endpoint becomes an instance method named after the endpoint's `operationId`.
+- Each operation becomes an instance method named after the operation identifier from the schema.
 - All methods must use `this.httpClient` to make requests.
 - All methods are instance methods (not static).
 
@@ -78,7 +78,7 @@ interface HttpClient {
 Parameters must appear in this order:
 1. **Path parameters** (required, positional)
 2. **Query parameters** (optional, single object with all query params as optional properties)
-3. **Request body** (required if endpoint has requestBody, named `body`)
+3. **Request body** (required if the operation has a requestBody, named `body`)
 4. **Headers** (optional, named `headers`)
 
 Examples:
@@ -147,7 +147,7 @@ if (query) {
 ```typescript
 /**
  * Petstore Client - findPetById
- * Generated from petstore OpenAPI schema by openapi-skills.
+ * Generated from petstore API schema by openapi-skills.
  */
 
 interface HttpClient {

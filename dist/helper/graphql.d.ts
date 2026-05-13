@@ -14,8 +14,6 @@ export type GraphQLEndpointRecord = {
     operationId: string;
     sanitizedOperationId: string;
     rootType: GraphQLRootType;
-    method: string | null;
-    path: string | null;
     summary?: string;
     description?: string;
     args: Record<string, GraphQLTypeDescriptor>;

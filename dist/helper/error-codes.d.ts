@@ -1,0 +1,28 @@
+export declare enum ErrorCode {
+    UNKNOWN_API = "UNKNOWN_API",
+    MISSING_FILTER_ARGUMENT = "MISSING_FILTER_ARGUMENT",
+    INVALID_FILTER_SYNTAX = "INVALID_FILTER_SYNTAX",
+    SCHEMA_TYPE_MISMATCH = "SCHEMA_TYPE_MISMATCH",
+    INVALID_VARIABLE_SYNTAX = "INVALID_VARIABLE_SYNTAX",
+    INVALID_JSON_ARGUMENT = "INVALID_JSON_ARGUMENT",
+    SCHEMA_VALIDATION_FAILED = "SCHEMA_VALIDATION_FAILED",
+    INVALID_REQUEST_UPDATE = "INVALID_REQUEST_UPDATE",
+    INVALID_UPDATE_REQUEST_JSON = "INVALID_UPDATE_REQUEST_JSON",
+    MISSING_PARSED_API = "MISSING_PARSED_API",
+    NO_ENDPOINTS_FOUND = "NO_ENDPOINTS_FOUND",
+    NO_RESPONSE_SCHEMA = "NO_RESPONSE_SCHEMA",
+    REQUEST_TEMPLATE_STALE = "REQUEST_TEMPLATE_STALE",
+    OVERSIZED_OUTPUT = "OVERSIZED_OUTPUT",
+    API_PARSE_ERROR = "API_PARSE_ERROR",
+    REQUEST_FAILED = "REQUEST_FAILED",
+    VALIDATION_FAILED = "VALIDATION_FAILED",
+    CONFIG_ERROR = "CONFIG_ERROR"
+}
+export type ErrorCategory = "usage" | "validation" | "configuration" | "runtime" | "state";
+export type ErrorSeverity = "error" | "warning";
+export declare const RemediationTemplates: Record<ErrorCode, {
+    reason: string;
+    nextCommandHint?: string;
+}>;
+export declare const ErrorCategories: Record<ErrorCode, ErrorCategory>;
+//# sourceMappingURL=error-codes.d.ts.map
