@@ -1,8 +1,87 @@
 import fs from "fs-extra";
-import * as ts from "typescript";
+import path from "path";
+import prompts from "prompts";
+import { spawn } from "child_process";
 import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
 import { sanitizeOperationPath } from "./sanitizer.js";
+import { isInteractive } from "./logger.js";
 const scalarNames = new Set(["String", "Int", "Float", "Boolean", "ID"]);
+let cachedTypeScriptModule = null;
+async function tryLoadTs() {
+    if (cachedTypeScriptModule) {
+        return cachedTypeScriptModule;
+    }
+    try {
+        const tsModule = await import("typescript");
+        cachedTypeScriptModule = tsModule;
+        return tsModule;
+    }
+    catch {
+        return null;
+    }
+}
+export async function askToInstallTs() {
+    if (!isInteractive) {
+        return false;
+    }
+    const response = await prompts({
+        type: "confirm",
+        name: "install",
+        message: "TypeScript is required to analyze builder GraphQL schemas. Install it now?",
+        initial: true,
+    });
+    return Boolean(response.install);
+}
+async function installTs() {
+    await new Promise((resolve, reject) => {
+        const child = spawn("npm", ["install", "typescript"], {
+            stdio: "inherit",
+            shell: true,
+        });
+        child.on("error", reject);
+        child.on("exit", code => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new Error("Failed to install TypeScript"));
+        });
+    });
+}
+async function loadTsOrInstall() {
+    let tsModule = await tryLoadTs();
+    if (tsModule) {
+        return tsModule;
+    }
+    const shouldInstall = await askToInstallTs();
+    if (!shouldInstall) {
+        throw new Error("TypeScript is required for builder schemas. Install it manually with: npm i typescript");
+    }
+    await installTs();
+    tsModule = await tryLoadTs();
+    if (!tsModule) {
+        throw new Error("TypeScript installation failed.");
+    }
+    return tsModule;
+}
+function getTypeScriptModule() {
+    if (!cachedTypeScriptModule) {
+        throw new Error("TypeScript has not been loaded for builder GraphQL parsing.");
+    }
+    return cachedTypeScriptModule;
+}
+export function looksLikeBuilderTsSchema(sourceText, sourcePath) {
+    if (sourcePath && path.extname(sourcePath).toLowerCase() === ".ts") {
+        return true;
+    }
+    return [
+        /\bbuilder\.queryType\s*\(/,
+        /\bbuilder\.mutationType\s*\(/,
+        /\bbuilder\.subscriptionType\s*\(/,
+        /\bobjectType\s*\(/,
+        /\bnew\s+SchemaBuilder\s*\(/,
+    ].some(pattern => pattern.test(sourceText));
+}
 export async function loadSourceText(source) {
     if (/^https?:\/\//i.test(source)) {
         const response = await fetch(source);
@@ -25,6 +104,7 @@ export function isGraphQL(text) {
     ].some(pattern => pattern.test(text));
 }
 function firstStringLiteralValue(node) {
+    const ts = getTypeScriptModule();
     if (!node) {
         return undefined;
     }
@@ -34,6 +114,7 @@ function firstStringLiteralValue(node) {
     return undefined;
 }
 function getPropertyAssignment(objectLiteral, propertyName) {
+    const ts = getTypeScriptModule();
     if (!objectLiteral) {
         return undefined;
     }
@@ -48,6 +129,7 @@ function getPropertyAssignment(objectLiteral, propertyName) {
     });
 }
 function getPropertyExpression(objectLiteral, propertyName) {
+    const ts = getTypeScriptModule();
     const property = getPropertyAssignment(objectLiteral, propertyName);
     if (!property || !ts.isPropertyAssignment(property)) {
         return undefined;
@@ -55,6 +137,7 @@ function getPropertyExpression(objectLiteral, propertyName) {
     return property.initializer;
 }
 function unwrapParenthesized(expression) {
+    const ts = getTypeScriptModule();
     let current = expression;
     while (current && ts.isParenthesizedExpression(current)) {
         current = current.expression;
@@ -62,6 +145,7 @@ function unwrapParenthesized(expression) {
     return current;
 }
 function getObjectLiteralFromExpression(expression) {
+    const ts = getTypeScriptModule();
     const unwrapped = unwrapParenthesized(expression);
     if (!unwrapped) {
         return undefined;
@@ -86,6 +170,7 @@ function getObjectLiteralFromExpression(expression) {
     return undefined;
 }
 function getRootTypeFromCallExpression(callExpression) {
+    const ts = getTypeScriptModule();
     const expression = callExpression.expression;
     if (!ts.isPropertyAccessExpression(expression)) {
         return undefined;
@@ -103,6 +188,7 @@ function getRootTypeFromCallExpression(callExpression) {
     return undefined;
 }
 function getTypeNameFromExpression(expression, typeMaps) {
+    const ts = getTypeScriptModule();
     const unwrapped = unwrapParenthesized(expression);
     if (!unwrapped) {
         return undefined;
@@ -116,6 +202,7 @@ function getTypeNameFromExpression(expression, typeMaps) {
     return unwrapped.getText();
 }
 function inferBuilderOutputFieldTypeText(expression, typeMaps) {
+    const ts = getTypeScriptModule();
     const unwrapped = unwrapParenthesized(expression);
     if (!unwrapped) {
         return undefined;
@@ -166,6 +253,7 @@ function inferBuilderOutputFieldTypeText(expression, typeMaps) {
     return getTypeNameFromExpression(unwrapped, typeMaps);
 }
 function collectBuilderTypeMaps(sourceFile) {
+    const ts = getTypeScriptModule();
     const objectTypeNames = {};
     const rawFields = {};
     function visit(node) {
@@ -308,6 +396,7 @@ function inferTypeDescriptorFromText(typeText, isInput) {
     };
 }
 function inferLiteralValue(expression) {
+    const ts = getTypeScriptModule();
     const unwrapped = unwrapParenthesized(expression);
     if (!unwrapped) {
         return undefined;
@@ -348,6 +437,7 @@ function inferLiteralValue(expression) {
     return undefined;
 }
 function inferArgDescriptorFromExpression(expression) {
+    const ts = getTypeScriptModule();
     const unwrapped = unwrapParenthesized(expression);
     if (!unwrapped) {
         return { kind: "unknown", typeName: "Unknown" };
@@ -642,7 +732,8 @@ function describeOutputType(type, visited = new Set()) {
     }
     return { kind: "unknown", typeName: type.toString() };
 }
-function extractGraphQLEndpointsFromBuilderSource(sourceText) {
+async function extractGraphQLEndpointsFromBuilderSource(sourceText) {
+    const ts = await loadTsOrInstall();
     const sourceFile = ts.createSourceFile("graphql-source.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const typeMaps = collectBuilderTypeMaps(sourceFile);
     const endpoints = [];
@@ -706,16 +797,14 @@ function extractGraphQLEndpointsFromBuilderSource(sourceText) {
     visit(sourceFile);
     return endpoints;
 }
-export function extractGraphQLEndpoints(sourceText) {
-    try {
-        return extractGraphQLEndpointsFromSDL(sourceText);
+export async function extractGraphQLEndpoints(sourceText, sourcePath) {
+    if (looksLikeBuilderTsSchema(sourceText, sourcePath)) {
+        return await extractGraphQLEndpointsFromBuilderSource(sourceText);
     }
-    catch {
-        return extractGraphQLEndpointsFromBuilderSource(sourceText);
-    }
+    return extractGraphQLEndpointsFromSDL(sourceText);
 }
-export function findGraphQLEndpoint(sourceText, rootType, fieldName) {
-    const endpoints = extractGraphQLEndpoints(sourceText);
+export async function findGraphQLEndpoint(sourceText, rootType, fieldName, sourcePath) {
+    const endpoints = await extractGraphQLEndpoints(sourceText, sourcePath);
     const endpoint = endpoints.find(entry => entry.rootType === rootType && entry.name === fieldName);
     if (!endpoint) {
         throw new Error(`GraphQL field '${fieldName}' not found on root type '${rootType}'.`);

@@ -86,7 +86,7 @@ async function ensureGraphQLEndpointSchemaFile(apiName, operationId, sanitizedOp
         throw new Error(`Invalid GraphQL endpoint metadata for '${operationId}'.`);
     }
     const sourceText = await readGraphQLBundledSource(apiName);
-    const schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+    const schema = await findGraphQLEndpoint(sourceText, rootType, operationId);
     await fs.ensureDir(path.dirname(schemaPath));
     await fs.writeJson(schemaPath, schema, { spaces: 2 });
     return schema;
@@ -327,7 +327,7 @@ async function parseGraphQL(graphqlSource, baseUrl, options = {}, sourceText) {
     await fs.remove(apiDir);
     const schemasDir = getSchemasDir(apiName);
     await fs.ensureDir(schemasDir);
-    const endpoints = extractGraphQLEndpoints(loadedSourceText);
+    const endpoints = await extractGraphQLEndpoints(loadedSourceText, graphqlSource);
     if (endpoints.length === 0) {
         throw new Error("Invalid GraphQL schema: no query, mutation, or subscription fields were found.");
     }
@@ -371,7 +371,7 @@ export async function validateSchema(schemaSource) {
     try {
         const sourceText = await loadSourceText(schemaSource).catch(() => undefined);
         if (sourceText && isGraphQL(sourceText)) {
-            extractGraphQLEndpoints(sourceText);
+            await extractGraphQLEndpoints(sourceText, schemaSource);
             return;
         }
         await SwaggerParser.validate(schemaSource);

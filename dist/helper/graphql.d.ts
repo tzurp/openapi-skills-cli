@@ -23,10 +23,12 @@ export type GraphQLArtifact = {
     query: string;
     variables: Record<string, unknown>;
 };
+export declare function askToInstallTs(): Promise<boolean>;
+export declare function looksLikeBuilderTsSchema(sourceText: string, sourcePath?: string): boolean;
 export declare function loadSourceText(source: string): Promise<string>;
 export declare function isGraphQL(text: string): boolean;
-export declare function extractGraphQLEndpoints(sourceText: string): GraphQLEndpointRecord[];
-export declare function findGraphQLEndpoint(sourceText: string, rootType: GraphQLRootType, fieldName: string): GraphQLEndpointRecord;
+export declare function extractGraphQLEndpoints(sourceText: string, sourcePath?: string): Promise<GraphQLEndpointRecord[]>;
+export declare function findGraphQLEndpoint(sourceText: string, rootType: GraphQLRootType, fieldName: string, sourcePath?: string): Promise<GraphQLEndpointRecord>;
 export declare function buildGraphQLArtifact(endpoint: GraphQLEndpointRecord): GraphQLArtifact;
 export declare function buildGraphQLOperationSchema(endpoint: GraphQLEndpointRecord): GraphQLEndpointRecord;
 export declare function getGraphQLRootTypeFromMethod(method: string): GraphQLRootType | undefined;

@@ -144,7 +144,7 @@ async function ensureGraphQLOperationSchema(apiName, operationId, force = false)
     if (!rootType || (rootType !== "query" && rootType !== "mutation" && rootType !== "subscription")) {
         throw new Error(`Invalid GraphQL endpoint metadata for '${operationId}'.`);
     }
-    const schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+    const schema = await findGraphQLEndpoint(sourceText, rootType, operationId);
     await fs.ensureDir(path.dirname(schemaPath));
     await fs.writeJson(schemaPath, schema, { spaces: 2 });
     return schema;

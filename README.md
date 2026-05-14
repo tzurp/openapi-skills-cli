@@ -44,6 +44,14 @@ The skills simply tell agents *how to run the tool*.
 npm install -g openapi-skills
 ```
 
+`openapi-skills` is designed to work inside a project directory. If the folder has not been initialized with `npm init`, it is recommended to add a minimal `package.json` file first, for example:
+
+```json
+{}
+```
+
+This helps prevent unexpected behavior when the CLI needs to resolve or install project-local dependencies.
+
 ---
 
 ## 🧩 Installing Skills for AI Agents

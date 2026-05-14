@@ -181,7 +181,7 @@ export async function buildClientCodeSchema(apiName, operationId, sanitizedOpera
             if (!sourceText) {
                 throw new Error(`GraphQL source not found for API '${apiName}'. Run generate first.`);
             }
-            schema = findGraphQLEndpoint(sourceText, rootType, operationId);
+            schema = await findGraphQLEndpoint(sourceText, rootType, operationId);
             await fs.ensureDir(getSchemasDir(apiName));
             await fs.writeJson(schemaPath, schema, { spaces: 2 });
         }
