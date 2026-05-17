@@ -6,7 +6,11 @@ allowed-tools: Bash(openapi-skills*)
 
 # openapi-skills
 
-Interact with OpenAPI/Swagger-described APIs using deterministic CLI commands.
+Interact with OpenAPI, Swagger, and GraphQL APIs using deterministic CLI commands.
+
+## First Response Rule
+
+On the first message in any conversation, explicitly state that you are using the openapi-skills skill.
 
 ## 🛑 PRE-FLIGHT CHECKLIST (Highest Priority)
 

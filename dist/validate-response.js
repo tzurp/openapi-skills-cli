@@ -9,7 +9,7 @@ import { loadConfig } from "./index.js";
 import getSanitizedOperationId from "./helper/endpoint-utils.js";
 import { getParameterDefaultValue } from "./helper/parameter-schema.js";
 import { getByPath } from "./helper/dotNotation.js";
-import { buildGraphQLArtifact, extractGraphQLEndpoints, findGraphQLEndpoint } from "./helper/graphql.js";
+import { buildGraphQLArtifact, findGraphQLEndpoint } from "./helper/graphql.js";
 import { getEndpointsPath } from "./helper/paths.js";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {

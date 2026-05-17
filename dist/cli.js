@@ -140,8 +140,6 @@ const generateCmd = program
         const baseUrlProvided = providedBaseUrl.length > 0;
         const baseUrl = baseUrlProvided ? providedBaseUrl : "";
         const apiName = await parseSchemaSource(openapiSource, baseUrl, { dereference: options.dereference === true, progress: options.progress !== false, rename: options.rename });
-        const outDir = path.join(openapiToSkillsDir, apiName);
-        const configPath = path.join(openapiToSkillsDir, "config.json");
         if (!baseUrlProvided) {
             const warningMessage = [
                 `You haven't included --base-url for API "${apiName}".`,

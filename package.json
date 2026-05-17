@@ -1,7 +1,7 @@
 {
   "name": "openapi-skills",
-  "version": "0.5.1-rc.3",
-  "description": "CLI toolkit for turning OpenAPI and GraphQL specs into agent-ready skills, typed client schemas, request validators, operation tests, and exploration tools. Teaches AI agents how to operate the CLI and write API tests and client code.",
+  "version": "0.5.1-rc.4",
+  "description": "CLI toolkit for exploring OpenAPI and GraphQL schemas, generating operation artifacts, validators, and tests. Includes an agent skill bundle that teaches AI tools how to operate the CLI safely and efficiently.",
   "bin": {
     "openapi-skills": "./bin/openapi-skills"
   },
@@ -20,10 +20,14 @@
   "keywords": [
     "openapi",
     "swagger",
+    "graphql",
     "cli",
     "api",
     "agent",
-    "skills"
+    "skills",
+    "schema",
+    "validator",
+    "testing"
   ],
   "author": "Tzur Paldi",
   "license": "Apache-2.0",
