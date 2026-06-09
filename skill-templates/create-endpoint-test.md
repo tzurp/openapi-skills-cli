@@ -49,11 +49,8 @@ Every generated test file must start with:
    - GraphQL: `name`, `rootType`
 3. Note: If the operation returns multiple response codes or outcomes, plan error tests for each relevant branch
 
-### Step 3: (Optional) Enrich with Live Data
-1. Run: `openapi-skills request <operationName> --api <apiName>` (optional)
-   - Produces realistic `request.json` and `response.json`
-   - Use if request body is complex or response structure unclear
-   - NOT required; can generate tests without this
+### Step 3: Optional Live Data Check
+If a base URL is configured, try `openapi-skills request <operationName> --api <apiName>` once to capture real request/response examples. If the call succeeds, use those artifacts as reference when writing tests. If it fails repeatedly with 400/500 errors, ask the user whether to skip this step and continue with schema-only data, known from the client code in Step 1.
 
 ### Step 4: Generate Test File
 1. Ensure `/tests` directory exists (create if needed)
