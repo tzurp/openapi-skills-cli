@@ -464,6 +464,11 @@ Show the CLI version.
 
 ---
 
+### Walkthrough Video
+https://github.com/user-attachments/assets/b462a57e-e2da-4556-9a96-1c8d5ffc9e0b
+
+---
+
 ## License
 MIT License  
 Copyright © 2026  
