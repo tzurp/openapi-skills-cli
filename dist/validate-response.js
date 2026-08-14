@@ -327,9 +327,15 @@ export async function buildRequestBodyTransport(operationSchema, requestJsonOrBo
             },
         };
     }
+    const requestJson = requestJsonOrBody;
+    const hasRequestShape = !!requestJson
+        && typeof requestJson === "object"
+        && !Array.isArray(requestJson)
+        && "requestBody" in requestJson;
+    const jsonBody = hasRequestShape ? requestJson.requestBody : requestJsonOrBody;
     return {
         kind: "json",
-        body: requestJsonOrBody,
+        body: jsonBody,
         headers: {},
     };
 }
@@ -582,6 +588,24 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
                 break;
             case "delete":
                 liveResponse = await httpClient.delete(requestContext.url, { headers: requestContext.headers });
+                break;
+            case "patch":
+                {
+                    const requestBodyTransport = await buildRequestBodyTransport(endpointSchema, requestJson);
+                    liveResponse = await httpClient.patch(requestContext.url, {
+                        headers: {
+                            ...requestContext.headers,
+                            ...requestBodyTransport.headers,
+                        },
+                        body: requestBodyTransport.body,
+                    });
+                }
+                break;
+            case "head":
+                liveResponse = await httpClient.head(requestContext.url, { headers: requestContext.headers });
+                break;
+            case "options":
+                liveResponse = await httpClient.options(requestContext.url, { headers: requestContext.headers });
                 break;
             default:
                 throw new Error(`Unsupported HTTP method: ${restSchema.method}`);
