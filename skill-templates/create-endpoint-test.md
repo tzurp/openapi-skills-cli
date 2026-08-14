@@ -51,6 +51,7 @@ Every generated test file must start with:
 
 ### Step 3: Optional Live Data Check
 If a base URL is configured, try `openapi-skills request <operationName> --api <apiName>` once to capture real request/response examples. If the call succeeds, use those artifacts as reference when writing tests. If it fails repeatedly with 400/500 errors, ask the user whether to skip this step and continue with schema-only data, known from the client code in Step 1.
+For multipart or file-upload operations, inspect the request template and make sure the test uses a real file path or file descriptor for the binary field instead of a plain string body. If you know the uploaded file, derive `fileName` and `mimeType` from that file context instead of leaving them blank.
 
 ### Step 4: Generate Test File
 1. Ensure `/tests` directory exists (create if needed)
@@ -94,6 +95,7 @@ If a base URL is configured, try `openapi-skills request <operationName> --api <
 - Response structure matches client return type (check keys/types exist)
 - Response status is 2xx
 - Key fields have expected values (use client types or API schema constraints)
+- For upload endpoints, assert the request succeeds with a real file fixture and a 2xx response, even if the API does not echo the filename back.
 
 **Example triggers:**
 - GET operation with path `{id}` → provide valid ID, expect pet details

@@ -15,4 +15,3 @@ export type GetOperationFilterResult = {
     kind: "invalid";
 };
 export declare function parseGetOperationFilter(expr: string): GetOperationFilterResult;
-//# sourceMappingURL=get-operation-filter.d.ts.map

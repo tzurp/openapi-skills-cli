@@ -12,4 +12,3 @@ type RawParameter = {
 export declare function resolveParameterSchema(parameter: RawParameter | undefined): Record<string, unknown> | undefined;
 export declare function getParameterDefaultValue(parameter: RawParameter | undefined): unknown;
 export {};
-//# sourceMappingURL=parameter-schema.d.ts.map

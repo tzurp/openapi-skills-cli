@@ -15,4 +15,3 @@ export declare function updateJsonFile(filePath: string, updates: Updates, space
     before: any;
     after: any;
 }>;
-//# sourceMappingURL=json-updater.d.ts.map

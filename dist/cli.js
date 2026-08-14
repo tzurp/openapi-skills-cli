@@ -5,7 +5,6 @@ import path from "path";
 import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
 import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, loadConfig } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
-import {} from "./helper/json-updater.js";
 import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings, getSchemaType } from "./validate-response.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
@@ -22,6 +21,7 @@ import { filterArray, getByPath } from "./helper/dotNotation.js";
 import { parseGetOperationFilter } from "./helper/get-operation-filter.js";
 import { buildError, buildSuccess } from "./helper/error-formatter.js";
 import { ErrorCode } from "./helper/error-codes.js";
+import { isTypeScriptUnavailableError, typescriptInstallCommand } from "./helper/graphql.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 const url = pkg.repository.url;
@@ -169,6 +169,17 @@ const generateCmd = program
         process.exitCode = 0;
     }
     catch (error) {
+        if (isTypeScriptUnavailableError(error)) {
+            logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+                summary: "TypeScript is required to analyze builder GraphQL schemas.",
+                message: `TypeScript is not available in this environment. Install it with \`${typescriptInstallCommand}\` and rerun the command.`,
+                context: { openapi_source: openapiSource },
+                nextCommand: typescriptInstallCommand,
+                reason: "GraphQL builder parsing requires TypeScript to be installed in the current workspace.",
+            }));
+            process.exitCode = 1;
+            return;
+        }
         logger.result(buildError(options.validate ? ErrorCode.SCHEMA_VALIDATION_FAILED : ErrorCode.API_PARSE_ERROR, {
             summary: options.validate ? "OpenAPI or GraphQL schema is invalid." : "Failed to parse the provided schema.",
             message: toErrorMessage(error),
@@ -820,7 +831,7 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact; only flattened object dot-notation keys are allowed), --header (add headers).")
+    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --header (add headers).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists.")
     .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
@@ -828,6 +839,7 @@ const requestCmd = program
     "Update request artifact before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
     "Nested JSON objects are supported (they will be flattened and issue a warning), but the top-level value must be a JSON object. Invalid JSON will cause the command to fail.",
     "To delete a field, set its value to \"__delete__\".",
+    "Binary request fields may be patched with a file path string or an object like {\"kind\":\"file\",\"path\":\"c:/path/file.pdf\",\"fileName\":\"file.pdf\",\"mimeType\":\"application/pdf\"}.",
     "Format (POSIX shells): --update-request '{\"field.path\":value,...}'",
     "Format (PowerShell): --update-request \"{\"field.path\":value,...}\"  (escape inner quotes as needed)",
     "  - Only flattened object dot-notation keys are recommended (e.g. 'items.0.name').",
@@ -1058,14 +1070,14 @@ requestCmd.agentMeta = {
         "When multiple operationIds are supplied, the command enters prepare-only mode and refreshes request artifact templates for the scenario.",
         "With --validate, validate only the response against the schema after the request is sent.",
         "With --force, regenerate the request artifact from schema defaults.",
-        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. Set a field to \"__delete__\" to remove it."
+        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. Binary fields can be set to a file path string or a file descriptor object. Set a field to \"__delete__\" to remove it."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists." },
         { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
-        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
+        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Binary fields can be set to a file path string or file descriptor object. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
         { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." }
     ],
     examples: [

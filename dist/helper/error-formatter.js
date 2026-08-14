@@ -1,4 +1,4 @@
-import { ErrorCode, ErrorCategories, RemediationTemplates } from "./error-codes.js";
+import { ErrorCategories, RemediationTemplates } from "./error-codes.js";
 export function buildError(code, options) {
     const category = ErrorCategories[code];
     const template = RemediationTemplates[code];

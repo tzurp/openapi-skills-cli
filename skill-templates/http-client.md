@@ -52,6 +52,12 @@ export interface HttpClient {
  * This allows the same client to work in both environments:
  * - Node/Vitest → uses global fetch()
  * - Playwright → uses requestContext.fetch()
+ *
+ * Multipart and binary uploads should be passed through as real request bodies:
+ * - JSON bodies can still be plain objects
+ * - multipart bodies should be FormData
+ * - file parts should be represented as Blob/File/Buffer-backed values, not strings
+ * - do not force `Content-Type: application/json` when the request is multipart
  */
 
 export class FetchClient implements HttpClient {

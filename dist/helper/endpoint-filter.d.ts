@@ -12,4 +12,3 @@ export declare function anyEndpointMatches(endpoints: Array<Record<string, any>>
     filter?: string;
     method?: string;
 }): boolean;
-//# sourceMappingURL=endpoint-filter.d.ts.map

@@ -25,4 +25,3 @@ export declare const RemediationTemplates: Record<ErrorCode, {
     nextCommandHint?: string;
 }>;
 export declare const ErrorCategories: Record<ErrorCode, ErrorCategory>;
-//# sourceMappingURL=error-codes.d.ts.map

@@ -1,13 +1,13 @@
 {
   "name": "openapi-skills",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "CLI toolkit for exploring OpenAPI and GraphQL schemas, generating operation artifacts, validators, and tests. Includes an agent skill bundle that teaches AI tools how to operate the CLI safely and efficiently.",
   "bin": {
-    "openapi-skills": "./bin/openapi-skills"
+    "openapi-skills": "bin/openapi-skills"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tzurp/openapi-skills-cli.git"
+    "url": "git+https://github.com/tzurp/openapi-skills-cli.git"
   },
   "publishConfig": {
     "access": "public"
@@ -35,24 +35,24 @@
   "devDependencies": {
     "@types/find-root": "^1.1.4",
     "@types/fs-extra": "^11.0.4",
-    "@types/node": "^25.6.0",
+    "@types/node": "^26.2.0",
     "@types/prompts": "^2.4.9",
     "@vitest/coverage-v8": "^4.1.1",
     "@vitest/ui": "^4.1.1",
-    "execa": "^9.6.1",
+    "execa": "^10.0.1",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.2",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "@apidevtools/json-schema-ref-parser": "^14.0.1",
+    "@apidevtools/json-schema-ref-parser": "^15.5.1",
     "@apidevtools/swagger-parser": "^12.1.0",
     "ajv": "^8.18.0",
-    "commander": "^14.0.3",
+    "commander": "^15.0.0",
     "find-root": "^1.1.0",
     "fs-extra": "^11.3.4",
-    "graphql": "^16.11.0",
+    "graphql": "^17.0.2",
     "prompts": "^2.4.2"
   },
   "files": [

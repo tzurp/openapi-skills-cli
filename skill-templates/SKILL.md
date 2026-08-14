@@ -49,6 +49,9 @@ When you need CLI help as an agent, use `openapi-skills --help --silent` so the 
 3. Are you generating tests, client code, or helpers?
    - Read the required reference document first.
    - Do not generate code before that reference is loaded.
+4. Are you patching or replaying a request with binary or multipart fields?
+   - Inspect the request template first, then treat file fields as file paths or file descriptors rather than plain strings.
+   - Use the CLI's upload support directly instead of inventing ad-hoc body shapes.
 
 Fast defaults:
 - `openapi-skills request <operationId> --api <apiName>`
@@ -105,6 +108,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Use `openapi-skills generate-client-schema` instead of manual request construction.
 - Use `list` or `generate-client-schema` instead of parsing the spec directly.
 - When the user asks to make a request, call the API, or test an operation, use `openapi-skills request <operationId> [options]`.
+- When the schema implies multipart or binary upload, do not reduce the body to JSON just because headers can be customized; the body encoding has to match the request type.
 
 ### 6. NEVER read/write any file under `.openapi-skills` directly
 - Never read or write generated files under `.openapi-skills` directly.
@@ -126,6 +130,8 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Do not guess field names or add new top-level keys unless the template already contains them.
 - For multi-step flows, always inspect the request template before using values from a previous response.
 - If the template shape is unclear, stop and inspect it again rather than sending an ad-hoc request.
+- If a field is marked as binary/file-like, patch it with a file path string or a file descriptor object instead of a JSON string payload.
+- For multipart requests, keep text fields as strings and let the request transport turn file fields into actual file parts. When patching a file field with `--update-request`, derive `fileName` and `mimeType` from the uploaded file context if you know it, and do not leave them empty unless you truly have no file metadata.
 
 ## Before Writing ANY Code
 - If the user asks for tests, client code, or helpers, stop and read the required reference first.

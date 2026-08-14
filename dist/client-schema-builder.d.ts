@@ -33,4 +33,3 @@ export interface GraphQLClientCodeSchema {
 type BuildClientCodeSchemaResult = ClientCodeSchema | GraphQLClientCodeSchema;
 export declare function buildClientCodeSchema(apiName: string, operationId: string, sanitizedOperationId: string, force?: boolean): Promise<BuildClientCodeSchemaResult>;
 export {};
-//# sourceMappingURL=client-schema-builder.d.ts.map

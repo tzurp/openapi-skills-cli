@@ -21,4 +21,3 @@ export declare function prepareMultiOperationRequests(apiName: string, operation
     summaryText: string;
     payload: Record<string, unknown>;
 }>;
-//# sourceMappingURL=request-preparation.d.ts.map

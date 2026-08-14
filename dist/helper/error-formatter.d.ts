@@ -44,4 +44,3 @@ export declare function successList(items: unknown[]): unknown[];
 export declare function remediateUnknownApi(apiName: string): Remediation;
 export declare function remediateMissingParsedApi(source?: string): Remediation;
 export declare function remediateNoEndpoints(apiName: string, source?: string): Remediation;
-//# sourceMappingURL=error-formatter.d.ts.map

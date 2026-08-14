@@ -10,4 +10,3 @@ declare function parseOpenAPI(openapiSource: string, baseUrl: string, options?: 
 export declare function parseSchemaSource(openapiSource: string, baseUrl: string, options?: ParseOpenAPIOptions): Promise<string>;
 export declare function validateSchema(schemaSource: string): Promise<void>;
 export default parseOpenAPI;
-//# sourceMappingURL=parser.d.ts.map

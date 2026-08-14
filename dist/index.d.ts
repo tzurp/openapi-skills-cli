@@ -38,7 +38,7 @@ export declare function loadConfig(): Promise<ConfigType>;
 export declare function ensureConfig(): Promise<void>;
 export declare function updateConfig(apiName: string, options?: UpdateConfigOptions): Promise<void>;
 export declare function deleteApi(apiName: string): Promise<DeleteApiResult>;
-export declare function getConfigValue(apiName: string, key: ConfigField): Promise<string | Record<string, string> | [string, string][] | undefined>;
+export declare function getConfigValue(apiName: string, key: ConfigField): Promise<string | [string, string][] | Record<string, string> | undefined>;
 export declare function listEndpoints(apiName: string): Promise<Array<Record<string, any>>>;
 export declare function listApis(): Promise<string[]>;
 export type ApiNotFoundResult = {
@@ -48,4 +48,3 @@ export type ApiNotFoundResult = {
 };
 export declare function getApiNotFoundResult(apiName: string): Promise<ApiNotFoundResult | null>;
 export {};
-//# sourceMappingURL=index.d.ts.map

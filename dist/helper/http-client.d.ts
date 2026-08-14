@@ -26,4 +26,3 @@ export declare class FetchClient implements HttpClient {
     patch<T>(path: string, options?: HttpRequestWithBodyOptions): Promise<T>;
     delete<T>(path: string, options?: HttpRequestWithBodyOptions): Promise<T>;
 }
-//# sourceMappingURL=http-client.d.ts.map

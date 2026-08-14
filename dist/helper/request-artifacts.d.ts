@@ -7,6 +7,8 @@ export declare function resolveSelectedArtifact(options: {
     responseSchema?: boolean;
 }): {
     artifactName: OperationArtifactName | undefined;
+    error: string;
+} | {
+    artifactName: OperationArtifactName;
     error: string | undefined;
 };
-//# sourceMappingURL=request-artifacts.d.ts.map

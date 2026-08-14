@@ -9,11 +9,25 @@ type RequestJson = {
     query?: string;
     variables?: Record<string, unknown>;
 };
+type RequestBodyTransport = {
+    kind: "json";
+    body: unknown;
+    headers: Record<string, string>;
+} | {
+    kind: "multipart";
+    body: FormData;
+    headers: Record<string, string>;
+} | {
+    kind: "binary";
+    body: Buffer;
+    headers: Record<string, string>;
+};
 type MakeRequestResult = {
     request: any;
     response: any;
     warnings?: string[];
 };
+export declare function buildRequestBodyTransport(operationSchema: any, requestJsonOrBody: unknown): Promise<RequestBodyTransport>;
 export declare function getSchemaType(apiName: string): Promise<"openapi" | "graphql">;
 export declare function collectRequestUpdateTypeWarnings(requestJson: RequestJson, requestJsonUpdates: Updates): string[];
 export declare function ensureResponseSchema(apiName: string, operationId: string): Promise<any>;
@@ -31,4 +45,3 @@ export declare function prepareRequestTemplate(apiName: string, sanitizedOperati
 export declare function getDeterministicRequestBody(operation: any): any;
 export declare function getDeterministicResponseBody(operation: any): any;
 export {};
-//# sourceMappingURL=validate-response.d.ts.map

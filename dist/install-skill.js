@@ -70,6 +70,7 @@ export async function promptInstallLocation(defaultPath) {
     const homeDir = getProjectRoot();
     const menu = [
         { label: `~/.claude/skills/openapi-skills`, value: path.join(homeDir, ".claude", "skills", "openapi-skills") },
+        { label: `~/.cursor/skills/openapi-skills`, value: path.join(homeDir, ".cursor", "skills", "openapi-skills") },
         { label: `~/.agents/skills/openapi-skills`, value: path.join(homeDir, ".agents", "skills", "openapi-skills") },
         { label: `~/.github/skills/openapi-skills`, value: path.join(homeDir, ".github", "skills", "openapi-skills") },
         { label: "Other (enter a custom path)", value: "__custom__" }

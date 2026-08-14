@@ -1,25 +1,17 @@
 import fs from "fs-extra";
+import os from "os";
 import path from "path";
 import prompts from "prompts";
+import { createRequire } from "module";
+import { pathToFileURL } from "url";
 import { spawn } from "child_process";
 import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
 import { sanitizeOperationPath } from "./sanitizer.js";
 import { isInteractive } from "./logger.js";
 const scalarNames = new Set(["String", "Int", "Float", "Boolean", "ID"]);
+export const typescriptInstallCommand = "npm install typescript";
 let cachedTypeScriptModule = null;
-async function tryLoadTs() {
-    if (cachedTypeScriptModule) {
-        return cachedTypeScriptModule;
-    }
-    try {
-        const tsModule = await import("typescript");
-        cachedTypeScriptModule = tsModule;
-        return tsModule;
-    }
-    catch {
-        return null;
-    }
-}
+let cachedTypeScriptApi = null;
 export async function askToInstallTs() {
     if (!isInteractive) {
         return false;
@@ -31,6 +23,58 @@ export async function askToInstallTs() {
         initial: true,
     });
     return Boolean(response.install);
+}
+function collectErrorMessages(error) {
+    if (!(error instanceof Error)) {
+        return [String(error)];
+    }
+    const messages = [error.message];
+    const cause = error.cause;
+    if (cause instanceof Error) {
+        messages.push(...collectErrorMessages(cause));
+    }
+    else if (cause !== undefined && cause !== null) {
+        messages.push(String(cause));
+    }
+    return messages;
+}
+export function isTypeScriptUnavailableError(error) {
+    return collectErrorMessages(error).some(message => /TypeScript is required to analyze builder GraphQL schemas/i.test(message)
+        || /Cannot find package ['"]typescript(?:\/unstable\/(?:ast|sync))?['"]/i.test(message)
+        || /Cannot find module ['"]typescript(?:\/unstable\/(?:ast|sync))?['"]/i.test(message)
+        || /ERR_MODULE_NOT_FOUND/i.test(message) && /typescript/i.test(message));
+}
+function resolveTypeScriptModule(specifier) {
+    const candidates = [
+        createRequire(import.meta.url),
+        createRequire(path.join(process.cwd(), "package.json")),
+    ];
+    for (const require of candidates) {
+        try {
+            return pathToFileURL(require.resolve(specifier)).href;
+        }
+        catch {
+        }
+    }
+    throw new Error(`Cannot find ${specifier}`);
+}
+async function importTypeScriptModule() {
+    try {
+        return await import("typescript/unstable/ast");
+    }
+    catch {
+        return await import(resolveTypeScriptModule("typescript/unstable/ast"));
+    }
+}
+async function importTypeScriptApi() {
+    let module;
+    try {
+        module = await import("typescript/unstable/sync");
+    }
+    catch {
+        module = await import(resolveTypeScriptModule("typescript/unstable/sync"));
+    }
+    return module.API;
 }
 async function installTs() {
     await new Promise((resolve, reject) => {
@@ -49,29 +93,57 @@ async function installTs() {
     });
 }
 async function loadTsOrInstall() {
-    let tsModule = await tryLoadTs();
-    if (tsModule) {
-        return tsModule;
+    if (cachedTypeScriptModule && cachedTypeScriptApi) {
+        return cachedTypeScriptModule;
     }
-    const shouldInstall = await askToInstallTs();
-    if (!shouldInstall) {
-        throw new Error("TypeScript is required for builder schemas. Install it manually with: npm i typescript");
+    try {
+        cachedTypeScriptModule = await importTypeScriptModule();
+        cachedTypeScriptApi = await importTypeScriptApi();
     }
-    await installTs();
-    tsModule = await tryLoadTs();
-    if (!tsModule) {
-        throw new Error("TypeScript installation failed.");
-    }
-    return tsModule;
-}
-function getTypeScriptModule() {
-    if (!cachedTypeScriptModule) {
-        throw new Error("TypeScript has not been loaded for builder GraphQL parsing.");
+    catch (error) {
+        if (!(await askToInstallTs())) {
+            throw new Error("TypeScript is required to analyze builder GraphQL schemas.", { cause: error });
+        }
+        await installTs();
+        cachedTypeScriptModule = await importTypeScriptModule();
+        cachedTypeScriptApi = await importTypeScriptApi();
     }
     return cachedTypeScriptModule;
 }
+function getTypeScriptModule() {
+    if (!cachedTypeScriptModule) {
+        throw new Error("TypeScript has not been loaded.");
+    }
+    return cachedTypeScriptModule;
+}
+async function parseSourceFile(sourceText, sourcePath) {
+    await loadTsOrInstall();
+    const extension = path.extname(sourcePath ?? "").toLowerCase();
+    const fileName = `graphql-source${extension === ".tsx" || extension === ".jsx" ? extension : ".ts"}`;
+    const tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "openapi-skills-graphql-"));
+    const tempFile = path.join(tempDirectory, fileName);
+    await fs.writeFile(tempFile, sourceText, "utf8");
+    if (!cachedTypeScriptApi) {
+        throw new Error("TypeScript API has not been loaded.");
+    }
+    const api = new cachedTypeScriptApi();
+    const snapshot = api.updateSnapshot({ openFiles: [tempFile] });
+    try {
+        const project = snapshot.getDefaultProjectForFile(tempFile);
+        const sourceFile = project?.program.getSourceFile(tempFile);
+        if (!sourceFile) {
+            throw new Error("TypeScript could not parse the GraphQL builder source.");
+        }
+        return sourceFile;
+    }
+    finally {
+        snapshot.dispose();
+        api.close();
+        await fs.remove(tempDirectory);
+    }
+}
 export function looksLikeBuilderTsSchema(sourceText, sourcePath) {
-    if (sourcePath && path.extname(sourcePath).toLowerCase() === ".ts") {
+    if (sourcePath && [".ts", ".tsx", ".mts", ".cts"].includes(path.extname(sourcePath).toLowerCase())) {
         return true;
     }
     return [
@@ -118,7 +190,7 @@ function getPropertyAssignment(objectLiteral, propertyName) {
     if (!objectLiteral) {
         return undefined;
     }
-    return objectLiteral.properties.find(property => {
+    return objectLiteral.properties.find((property) => {
         if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
             const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) || ts.isNumericLiteral(property.name)
                 ? property.name.text
@@ -297,7 +369,7 @@ function collectBuilderTypeMaps(sourceFile) {
                 }
             }
         }
-        ts.forEachChild(node, visit);
+        node.forEachChild(visit);
     }
     visit(sourceFile);
     return { objectTypeNames, objectFields: rawFields };
@@ -417,7 +489,7 @@ function inferLiteralValue(expression) {
         return null;
     }
     if (ts.isArrayLiteralExpression(unwrapped)) {
-        return unwrapped.elements.map(element => inferLiteralValue(element));
+        return unwrapped.elements.map((element) => inferLiteralValue(element));
     }
     if (ts.isObjectLiteralExpression(unwrapped)) {
         const out = {};
@@ -732,9 +804,9 @@ function describeOutputType(type, visited = new Set()) {
     }
     return { kind: "unknown", typeName: type.toString() };
 }
-async function extractGraphQLEndpointsFromBuilderSource(sourceText) {
+async function extractGraphQLEndpointsFromBuilderSource(sourceText, sourcePath) {
     const ts = await loadTsOrInstall();
-    const sourceFile = ts.createSourceFile("graphql-source.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sourceFile = await parseSourceFile(sourceText, sourcePath);
     const typeMaps = collectBuilderTypeMaps(sourceFile);
     const endpoints = [];
     function visit(node) {
@@ -792,14 +864,14 @@ async function extractGraphQLEndpointsFromBuilderSource(sourceText) {
                 }
             }
         }
-        ts.forEachChild(node, visit);
+        node.forEachChild(visit);
     }
     visit(sourceFile);
     return endpoints;
 }
 export async function extractGraphQLEndpoints(sourceText, sourcePath) {
     if (looksLikeBuilderTsSchema(sourceText, sourcePath)) {
-        return await extractGraphQLEndpointsFromBuilderSource(sourceText);
+        return await extractGraphQLEndpointsFromBuilderSource(sourceText, sourcePath);
     }
     return extractGraphQLEndpointsFromSDL(sourceText);
 }

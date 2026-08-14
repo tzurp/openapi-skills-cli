@@ -54,6 +54,7 @@ Substitute placeholders:
 - Each operation becomes an instance method named after the operation identifier from the schema.
 - All methods must use `this.httpClient` to make requests.
 - All methods are instance methods (not static).
+- If the operation request body is multipart or contains binary fields, preserve that distinction in the request-body type metadata instead of collapsing everything into a plain string/object payload.
 
 **Class Naming:**
 - Format: `<ApiName><FirstPathSegment>Client`
@@ -120,6 +121,14 @@ if (query) {
 - Path parameters are substituted using template literals: `/pet/${petId}`
 - Query string is appended only if query parameters exist and are not empty
 - Do not include the base URL; the `httpClient` implementation handles it
+
+### Multipart and File Uploads
+
+- When `generate-client-schema` indicates multipart content, represent file fields explicitly in the generated request-body shape.
+- Prefer a file descriptor style for binary fields, for example `{ kind: "file", path: string, fileName?: string, mimeType?: string }`, and derive `fileName` and `mimeType` from the file context when the path is known.
+- Keep ordinary text fields as strings or normal JSON values.
+- Use any `encoding.<field>.contentType` hint from the schema when choosing the file MIME type.
+- If the operation is a raw binary upload, the client should accept a file-like body instead of a JSON object.
 
 ## Complete Example
 

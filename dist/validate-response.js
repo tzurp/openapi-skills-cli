@@ -11,6 +11,8 @@ import { getParameterDefaultValue } from "./helper/parameter-schema.js";
 import { getByPath } from "./helper/dotNotation.js";
 import { buildGraphQLArtifact, findGraphQLEndpoint } from "./helper/graphql.js";
 import { getEndpointsPath } from "./helper/paths.js";
+import { ensureEndpointSchemaFile } from "./parser.js";
+import { fileURLToPath } from "url";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -57,12 +59,32 @@ function describeValueType(value) {
     if (value === null) {
         return "null";
     }
+    if (isFileDescriptorTemplateValue(value)) {
+        return "file";
+    }
     if (Array.isArray(value)) {
         return "array";
     }
     return typeof value;
 }
+function isFileDescriptorTemplateValue(value) {
+    return !!value
+        && typeof value === "object"
+        && !Array.isArray(value)
+        && value.kind === "file";
+}
+function isFileDescriptorValue(value) {
+    return !!value
+        && typeof value === "object"
+        && !Array.isArray(value)
+        && typeof value.path === "string"
+        && (value.kind === undefined || value.kind === "file");
+}
 function matchesExpectedTemplateValue(expectedValue, actualValue) {
+    if (isFileDescriptorTemplateValue(expectedValue)) {
+        return typeof actualValue === "string"
+            || isFileDescriptorValue(actualValue);
+    }
     if (expectedValue === null) {
         return actualValue === null;
     }
@@ -79,6 +101,237 @@ function isGraphQLRequestJson(value) {
         && typeof value.query === "string"
         && typeof value.variables === "object"
         && !Array.isArray(value.variables);
+}
+function normalizeMultipartContentType(value) {
+    if (!value) {
+        return undefined;
+    }
+    return value.split(",")[0]?.trim() || undefined;
+}
+function inferMimeTypeFromExtension(filePath) {
+    const extension = path.extname(filePath).toLowerCase();
+    switch (extension) {
+        case ".pdf":
+            return "application/pdf";
+        case ".jpg":
+        case ".jpeg":
+            return "image/jpeg";
+        case ".png":
+            return "image/png";
+        case ".webp":
+            return "image/webp";
+        case ".gif":
+            return "image/gif";
+        case ".txt":
+            return "text/plain";
+        case ".csv":
+            return "text/csv";
+        case ".json":
+            return "application/json";
+        case ".xml":
+            return "application/xml";
+        case ".xlsx":
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        case ".xls":
+            return "application/vnd.ms-excel";
+        case ".docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        case ".zip":
+            return "application/zip";
+        default:
+            return "application/octet-stream";
+    }
+}
+function normalizeFilePath(value) {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("@")) {
+        return path.resolve(trimmed.slice(1));
+    }
+    if (trimmed.startsWith("file://")) {
+        return path.resolve(fileURLToPath(new URL(trimmed)));
+    }
+    return path.resolve(trimmed);
+}
+async function resolveFileInput(value, fallbackMimeType) {
+    let filePath;
+    let fileName;
+    let mimeType;
+    if (typeof value === "string") {
+        if (value.trim().length === 0) {
+            throw new Error("File upload path cannot be empty.");
+        }
+        filePath = normalizeFilePath(value);
+    }
+    else if (isFileDescriptorValue(value)) {
+        if (value.path.trim().length === 0) {
+            throw new Error("File upload path cannot be empty.");
+        }
+        filePath = normalizeFilePath(value.path);
+        fileName = value.fileName?.trim() || undefined;
+        mimeType = value.mimeType?.trim() || undefined;
+    }
+    if (!filePath) {
+        throw new Error("File upload values must be a file path string or { kind: 'file', path, fileName?, mimeType? } object.");
+    }
+    if (!(await fs.pathExists(filePath))) {
+        throw new Error(`Upload file not found: ${filePath}`);
+    }
+    const buffer = await fs.readFile(filePath);
+    const resolvedFileName = fileName || path.basename(filePath);
+    const resolvedMimeType = mimeType || normalizeMultipartContentType(fallbackMimeType) || inferMimeTypeFromExtension(filePath);
+    return {
+        buffer,
+        path: filePath,
+        fileName: resolvedFileName,
+        mimeType: resolvedMimeType,
+    };
+}
+function bufferToBlobPart(buffer) {
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+}
+function findPreferredRequestContent(content) {
+    const entries = Object.entries(content);
+    const multipartEntry = entries.find(([contentType]) => contentType.toLowerCase().includes("multipart/form-data"));
+    if (multipartEntry) {
+        return { contentType: multipartEntry[0], contentObject: multipartEntry[1] };
+    }
+    const binaryEntry = entries.find(([contentType, contentObject]) => {
+        const schema = contentObject?.schema;
+        return contentType.toLowerCase().includes("octet-stream")
+            || (schema?.type === "string" && schema?.format === "binary");
+    });
+    if (binaryEntry) {
+        return { contentType: binaryEntry[0], contentObject: binaryEntry[1] };
+    }
+    const jsonEntry = entries.find(([contentType]) => contentType.toLowerCase().includes("json"));
+    if (jsonEntry) {
+        return { contentType: jsonEntry[0], contentObject: jsonEntry[1] };
+    }
+    const firstEntry = entries[0];
+    return firstEntry ? { contentType: firstEntry[0], contentObject: firstEntry[1] } : undefined;
+}
+function getRequestBodyTransportSpec(operationSchema) {
+    const requestBody = operationSchema?.requestBody;
+    const params = Array.isArray(operationSchema?.parameters) ? operationSchema.parameters : [];
+    const formParams = params.filter((p) => p && p.in === "formData");
+    const consumes = Array.isArray(operationSchema?.consumes) ? operationSchema.consumes : [];
+    const isMultipartFormData = consumes.some((contentType) => typeof contentType === "string" && contentType.toLowerCase().includes("multipart/form-data"));
+    if (formParams.length > 0 && isMultipartFormData) {
+        return {
+            kind: "multipart",
+            schema: extractRequestSchemaOAS2(operationSchema) ?? { type: "object", properties: {} },
+            encoding: {},
+        };
+    }
+    if (!requestBody || typeof requestBody !== "object") {
+        if (formParams.length > 0) {
+            return {
+                kind: "multipart",
+                schema: extractRequestSchemaOAS2(operationSchema) ?? { type: "object", properties: {} },
+                encoding: {},
+            };
+        }
+        return { kind: "json" };
+    }
+    const content = requestBody.content;
+    if (content && typeof content === "object" && !Array.isArray(content)) {
+        const preferred = findPreferredRequestContent(content);
+        if (!preferred) {
+            return { kind: "json" };
+        }
+        const mediaType = preferred.contentObject;
+        const schema = mediaType?.schema;
+        if (preferred.contentType.toLowerCase().includes("multipart/form-data")) {
+            return {
+                kind: "multipart",
+                schema: schema && typeof schema === "object" ? schema : { type: "object", properties: {} },
+                encoding: mediaType?.encoding ?? {},
+            };
+        }
+        if (preferred.contentType.toLowerCase().includes("octet-stream") || (schema?.type === "string" && schema?.format === "binary")) {
+            return {
+                kind: "binary",
+                contentType: preferred.contentType,
+            };
+        }
+    }
+    return { kind: "json" };
+}
+export async function buildRequestBodyTransport(operationSchema, requestJsonOrBody) {
+    const transportSpec = getRequestBodyTransportSpec(operationSchema);
+    if (transportSpec.kind === "multipart") {
+        const requestJson = requestJsonOrBody;
+        const hasRequestShape = !!requestJson
+            && typeof requestJson === "object"
+            && !Array.isArray(requestJson)
+            && ("requestBody" in requestJson || "parameters" in requestJson);
+        const bodyObject = hasRequestShape
+            ? requestJson.requestBody
+            : requestJsonOrBody;
+        const fallbackFormData = hasRequestShape && Array.isArray(requestJson?.parameters)
+            ? Object.fromEntries(requestJson.parameters
+                .filter((param) => !!param
+                && param.in === "formData"
+                && typeof param.name === "string")
+                .map(param => [param.name, param.value]))
+            : {};
+        const multipartBody = bodyObject && typeof bodyObject === "object" && !Array.isArray(bodyObject)
+            ? bodyObject
+            : fallbackFormData;
+        if (!multipartBody || typeof multipartBody !== "object" || Array.isArray(multipartBody)) {
+            throw new Error("multipart/form-data request bodies must be JSON objects.");
+        }
+        const formData = new FormData();
+        const schemaProperties = transportSpec.schema?.properties && typeof transportSpec.schema.properties === "object"
+            ? transportSpec.schema.properties
+            : {};
+        for (const [fieldName, fieldValue] of Object.entries(multipartBody)) {
+            const fieldSchema = schemaProperties[fieldName];
+            const fieldEncoding = transportSpec.encoding[fieldName];
+            const fieldContentType = normalizeMultipartContentType(fieldEncoding?.contentType);
+            if (fieldSchema?.type === "string" && fieldSchema?.format === "binary") {
+                const file = await resolveFileInput(fieldValue, fieldContentType);
+                formData.append(fieldName, new Blob([bufferToBlobPart(file.buffer)], { type: file.mimeType }), file.fileName);
+                continue;
+            }
+            if (isFileDescriptorValue(fieldValue)) {
+                const file = await resolveFileInput(fieldValue, fieldContentType);
+                formData.append(fieldName, new Blob([bufferToBlobPart(file.buffer)], { type: file.mimeType }), file.fileName);
+                continue;
+            }
+            if (fieldValue === undefined || fieldValue === null) {
+                formData.append(fieldName, "");
+            }
+            else if (typeof fieldValue === "object") {
+                formData.append(fieldName, JSON.stringify(fieldValue));
+            }
+            else {
+                formData.append(fieldName, String(fieldValue));
+            }
+        }
+        return { kind: "multipart", body: formData, headers: {} };
+    }
+    if (transportSpec.kind === "binary") {
+        const requestJson = requestJsonOrBody;
+        const hasRequestShape = !!requestJson
+            && typeof requestJson === "object"
+            && !Array.isArray(requestJson)
+            && "requestBody" in requestJson;
+        const binaryInput = hasRequestShape ? requestJson.requestBody : requestJsonOrBody;
+        const file = await resolveFileInput(binaryInput, transportSpec.contentType);
+        return {
+            kind: "binary",
+            body: file.buffer,
+            headers: {
+                "Content-Type": file.mimeType,
+            },
+        };
+    }
+    return {
+        kind: "json",
+        body: requestJsonOrBody,
+        headers: {},
+    };
 }
 function buildGraphQLVariables(args) {
     const variables = {};
@@ -269,6 +522,7 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
     if (restSchema.schemaType !== "rest") {
         throw new Error(`Invalid REST endpoint metadata for '${operationId}'.`);
     }
+    const endpointSchema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force);
     const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force);
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     let requestJson = initialRequestJson;
@@ -303,16 +557,28 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
                 liveResponse = await httpClient.get(requestContext.url, { headers: requestContext.headers });
                 break;
             case "post":
-                liveResponse = await httpClient.post(requestContext.url, {
-                    headers: requestContext.headers,
-                    body: requestJson.requestBody,
-                });
+                {
+                    const requestBodyTransport = await buildRequestBodyTransport(endpointSchema, requestJson);
+                    liveResponse = await httpClient.post(requestContext.url, {
+                        headers: {
+                            ...requestContext.headers,
+                            ...requestBodyTransport.headers,
+                        },
+                        body: requestBodyTransport.body,
+                    });
+                }
                 break;
             case "put":
-                liveResponse = await httpClient.put(requestContext.url, {
-                    headers: requestContext.headers,
-                    body: requestJson.requestBody,
-                });
+                {
+                    const requestBodyTransport = await buildRequestBodyTransport(endpointSchema, requestJson);
+                    liveResponse = await httpClient.put(requestContext.url, {
+                        headers: {
+                            ...requestContext.headers,
+                            ...requestBodyTransport.headers,
+                        },
+                        body: requestBodyTransport.body,
+                    });
+                }
                 break;
             case "delete":
                 liveResponse = await httpClient.delete(requestContext.url, { headers: requestContext.headers });
@@ -461,7 +727,7 @@ function hasGeneratedRequestShape(value) {
     return Object.prototype.hasOwnProperty.call(requestJson, "parameters") && Array.isArray(requestJson.parameters);
 }
 function buildRequestContext(apiName, operationSchema, requestJson, config, responseJsonPath, cliHeaders, warnings = []) {
-    const headers = { "Content-Type": "application/json" };
+    const headers = {};
     const configHeaders = config.apis?.[apiName]?.auth?.headers;
     if (configHeaders && typeof configHeaders === "object") {
         Object.assign(headers, configHeaders);
@@ -601,6 +867,14 @@ function buildDeterministicTemplate(schema) {
     }
     switch (schema.type) {
         case "string":
+            if (schema.format === "binary") {
+                return {
+                    kind: "file",
+                    path: "",
+                    fileName: "",
+                    mimeType: "",
+                };
+            }
             return schema.example ?? "";
         case "integer":
         case "number":

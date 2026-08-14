@@ -15,33 +15,52 @@ export class FetchClient {
             options.body !== undefined &&
             method !== "GET" &&
             method !== "HEAD";
-        const response = await fetch(finalUrl, {
-            method,
-            headers: {
-                ...(hasBody ? { "Content-Type": "application/json" } : {}),
-                ...(options.headers ?? {})
-            },
-            body: hasBody ? JSON.stringify(options.body) : null
-        });
-        const text = await response.text();
-        let body = {};
-        if (text.trim().length > 0) {
-            try {
-                body = JSON.parse(text);
+        const headers = new Headers(options.headers ?? {});
+        let body = null;
+        if (hasBody) {
+            const requestBody = options.body;
+            const isFormData = typeof FormData !== "undefined" && requestBody instanceof FormData;
+            const isBlob = typeof Blob !== "undefined" && requestBody instanceof Blob;
+            const isArrayBuffer = requestBody instanceof ArrayBuffer || ArrayBuffer.isView(requestBody);
+            const isBuffer = typeof Buffer !== "undefined" && Buffer.isBuffer(requestBody);
+            if (isFormData) {
+                headers.delete("Content-Type");
+                body = requestBody;
             }
-            catch {
-                body = text;
+            else if (isBlob || isArrayBuffer || isBuffer || typeof requestBody === "string") {
+                body = requestBody;
+            }
+            else {
+                if (!headers.has("Content-Type")) {
+                    headers.set("Content-Type", "application/json");
+                }
+                body = JSON.stringify(requestBody);
             }
         }
-        if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+        const response = await fetch(finalUrl, {
+            method,
+            headers,
+            body
+        });
+        const text = await response.text();
+        let responseBody = {};
+        if (text.trim().length > 0) {
+            try {
+                responseBody = JSON.parse(text);
+            }
+            catch {
+                responseBody = text;
+            }
+        }
+        if (responseBody !== null && typeof responseBody === "object" && !Array.isArray(responseBody)) {
             return {
-                ...body,
+                ...responseBody,
                 status: response.status,
                 statusText: response.statusText,
             };
         }
         return {
-            body,
+            body: responseBody,
             status: response.status,
             statusText: response.statusText,
         };

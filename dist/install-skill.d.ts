@@ -3,4 +3,3 @@ export declare function installSkillBundle(srcDir: string, destDir: string): Pro
     destDir: string;
     files: string[];
 }>;
-//# sourceMappingURL=install-skill.d.ts.map
