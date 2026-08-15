@@ -1,29 +1,24 @@
 import fs from "fs-extra";
 import os from "os";
 import path from "path";
-import prompts from "prompts";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
-import { spawn } from "child_process";
 import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
 import { sanitizeOperationPath } from "./sanitizer.js";
-import { isInteractive } from "./logger.js";
 const scalarNames = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 export const typescriptInstallCommand = "npm install typescript";
+const typescriptAstModuleSpecifiers = [
+    "typescript/ast",
+    "typescript",
+    "typescript/unstable/ast",
+];
+const typescriptSyncModuleSpecifiers = [
+    "typescript/sync",
+    "typescript",
+    "typescript/unstable/sync",
+];
 let cachedTypeScriptModule = null;
 let cachedTypeScriptApi = null;
-export async function askToInstallTs() {
-    if (!isInteractive) {
-        return false;
-    }
-    const response = await prompts({
-        type: "confirm",
-        name: "install",
-        message: "TypeScript is required to analyze builder GraphQL schemas. Install it now?",
-        initial: true,
-    });
-    return Boolean(response.install);
-}
 function collectErrorMessages(error) {
     if (!(error instanceof Error)) {
         return [String(error)];
@@ -38,11 +33,19 @@ function collectErrorMessages(error) {
     }
     return messages;
 }
+function isMissingTypeScriptModuleMessage(message) {
+    if (!/typescript/i.test(message)) {
+        return false;
+    }
+    if (!/(?:Cannot find (?:package|module)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND)/i.test(message)) {
+        return false;
+    }
+    return /['"]typescript(?:\/(?:unstable\/)?(?:ast|sync))?['"]/i.test(message)
+        || /Cannot find typescript(?:\/(?:unstable\/)?(?:ast|sync))?/i.test(message);
+}
 export function isTypeScriptUnavailableError(error) {
     return collectErrorMessages(error).some(message => /TypeScript is required to analyze builder GraphQL schemas/i.test(message)
-        || /Cannot find package ['"]typescript(?:\/unstable\/(?:ast|sync))?['"]/i.test(message)
-        || /Cannot find module ['"]typescript(?:\/unstable\/(?:ast|sync))?['"]/i.test(message)
-        || /ERR_MODULE_NOT_FOUND/i.test(message) && /typescript/i.test(message));
+        || isMissingTypeScriptModuleMessage(message));
 }
 function resolveTypeScriptModule(specifier) {
     const candidates = [
@@ -59,38 +62,92 @@ function resolveTypeScriptModule(specifier) {
     throw new Error(`Cannot find ${specifier}`);
 }
 async function importTypeScriptModule() {
-    try {
-        return await import("typescript/unstable/ast");
+    let lastError;
+    for (const specifier of typescriptAstModuleSpecifiers) {
+        try {
+            const module = await importTypeScriptAstSpecifier(specifier);
+            if (typeof module.isCallExpression === "function") {
+                return module;
+            }
+            lastError = new Error(`TypeScript module '${specifier}' does not export the AST API.`);
+        }
+        catch (error) {
+            lastError = error;
+            try {
+                const module = await import(resolveTypeScriptModule(specifier));
+                if (typeof module.isCallExpression === "function") {
+                    return module;
+                }
+                lastError = new Error(`TypeScript module '${specifier}' does not export the AST API.`);
+            }
+            catch (resolvedError) {
+                lastError = resolvedError;
+            }
+        }
     }
-    catch {
-        return await import(resolveTypeScriptModule("typescript/unstable/ast"));
-    }
+    throw lastError ?? new Error("TypeScript is required to analyze builder GraphQL schemas.");
+}
+async function importTypeScriptAstSpecifier(specifier) {
+    return await import(specifier);
 }
 async function importTypeScriptApi() {
-    let module;
-    try {
-        module = await import("typescript/unstable/sync");
-    }
-    catch {
-        module = await import(resolveTypeScriptModule("typescript/unstable/sync"));
-    }
-    return module.API;
-}
-async function installTs() {
-    await new Promise((resolve, reject) => {
-        const child = spawn("npm", ["install", "typescript"], {
-            stdio: "inherit",
-            shell: true,
-        });
-        child.on("error", reject);
-        child.on("exit", code => {
-            if (code === 0) {
-                resolve();
-                return;
+    let lastError;
+    for (const specifier of typescriptSyncModuleSpecifiers) {
+        try {
+            const module = await importTypeScriptSyncSpecifier(specifier);
+            if (typeof module.API === "function") {
+                return module.API;
             }
-            reject(new Error("Failed to install TypeScript"));
-        });
-    });
+            const legacyApi = createLegacyTypeScriptApi(module);
+            if (legacyApi) {
+                return legacyApi;
+            }
+            lastError = new Error(`TypeScript module '${specifier}' does not export API.`);
+        }
+        catch (error) {
+            lastError = error;
+            try {
+                const module = await import(resolveTypeScriptModule(specifier));
+                if (typeof module.API === "function") {
+                    return module.API;
+                }
+                const legacyApi = createLegacyTypeScriptApi(module);
+                if (legacyApi) {
+                    return legacyApi;
+                }
+                lastError = new Error(`TypeScript module '${specifier}' does not export API.`);
+            }
+            catch (resolvedError) {
+                lastError = resolvedError;
+            }
+        }
+    }
+    throw lastError ?? new Error("TypeScript is required to analyze builder GraphQL schemas.");
+}
+function createLegacyTypeScriptApi(module) {
+    if (typeof module.createSourceFile !== "function" || !module.ScriptTarget || !module.ScriptKind) {
+        return null;
+    }
+    return class LegacyTypeScriptApi {
+        updateSnapshot(options) {
+            const fileName = options.openFiles[0];
+            const sourceText = fs.readFileSync(fileName, "utf8");
+            const sourceFile = module.createSourceFile(fileName, sourceText, module.ScriptTarget.Latest, true, module.ScriptKind.TS);
+            return {
+                getDefaultProjectForFile: () => ({
+                    program: {
+                        getSourceFile: () => sourceFile,
+                    },
+                }),
+                dispose: () => undefined,
+            };
+        }
+        close() {
+        }
+    };
+}
+async function importTypeScriptSyncSpecifier(specifier) {
+    return await import(specifier);
 }
 async function loadTsOrInstall() {
     if (cachedTypeScriptModule && cachedTypeScriptApi) {
@@ -101,12 +158,7 @@ async function loadTsOrInstall() {
         cachedTypeScriptApi = await importTypeScriptApi();
     }
     catch (error) {
-        if (!(await askToInstallTs())) {
-            throw new Error("TypeScript is required to analyze builder GraphQL schemas.", { cause: error });
-        }
-        await installTs();
-        cachedTypeScriptModule = await importTypeScriptModule();
-        cachedTypeScriptApi = await importTypeScriptApi();
+        throw new Error("TypeScript is required to analyze builder GraphQL schemas.", { cause: error });
     }
     return cachedTypeScriptModule;
 }

@@ -63,7 +63,7 @@ This helps prevent unexpected behavior when the CLI needs to resolve or install 
 
 GraphQL SDL works without extra setup.
 
-Builder-style GraphQL schemas are detected separately and only load TypeScript when the source looks like a builder file. If TypeScript is already installed in the project, the CLI uses it directly. If it is missing, the CLI asks before installing it locally in the project directory.
+Builder-style GraphQL schemas are detected separately and only load TypeScript when the source looks like a builder file. If TypeScript is already installed in the project, the CLI uses it directly. If it is missing, the CLI asks the user to install it locally in the project directory.
 
 ---
 

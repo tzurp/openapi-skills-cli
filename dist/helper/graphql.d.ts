@@ -24,7 +24,6 @@ export type GraphQLArtifact = {
     variables: Record<string, unknown>;
 };
 export declare const typescriptInstallCommand = "npm install typescript";
-export declare function askToInstallTs(): Promise<boolean>;
 export declare function isTypeScriptUnavailableError(error: unknown): boolean;
 export declare function looksLikeBuilderTsSchema(sourceText: string, sourcePath?: string): boolean;
 export declare function loadSourceText(source: string): Promise<string>;
