@@ -883,6 +883,27 @@ function extractRequestSchemaOAS2(operation) {
 function buildDeterministicTemplate(schema) {
     if (!schema)
         return null;
+    if (schema.const !== undefined) {
+        return schema.const;
+    }
+    if (schema.default !== undefined) {
+        return schema.default;
+    }
+    if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+        const merged = schema.allOf
+            .map((item) => buildDeterministicTemplate(item))
+            .filter((value) => value !== null && value !== undefined)
+            .reduce((acc, value) => mergeDeterministicValues(acc, value), {});
+        if (merged !== null && merged !== undefined) {
+            return merged;
+        }
+    }
+    if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+        return selectDeterministicVariant(schema.oneOf.map((item) => buildDeterministicTemplate(item)));
+    }
+    if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+        return selectDeterministicVariant(schema.anyOf.map((item) => buildDeterministicTemplate(item)));
+    }
     if (!schema.type && schema.properties) {
         schema.type = "object";
     }
@@ -918,6 +939,40 @@ function buildDeterministicTemplate(schema) {
         default:
             return null;
     }
+}
+function isPlainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function mergeDeterministicValues(left, right) {
+    if (left === null || left === undefined) {
+        return right;
+    }
+    if (right === null || right === undefined) {
+        return left;
+    }
+    if (isPlainObject(left) && isPlainObject(right)) {
+        const merged = { ...left };
+        for (const [key, value] of Object.entries(right)) {
+            merged[key] = key in merged ? mergeDeterministicValues(merged[key], value) : value;
+        }
+        return merged;
+    }
+    return right;
+}
+function selectDeterministicVariant(variants) {
+    const candidates = variants.filter((value) => value !== null && value !== undefined);
+    if (candidates.length === 0) {
+        return null;
+    }
+    const objectCandidates = candidates.filter(isPlainObject);
+    if (objectCandidates.length > 0) {
+        return objectCandidates.reduce((best, candidate) => {
+            const bestSize = Object.keys(best).length;
+            const candidateSize = Object.keys(candidate).length;
+            return candidateSize > bestSize ? candidate : best;
+        });
+    }
+    return candidates[0];
 }
 function extractResponseSchemaOAS3(operation) {
     const responses = operation?.responses;
