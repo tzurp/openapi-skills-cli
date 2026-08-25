@@ -5,7 +5,7 @@
 ## Workflow
 
 1. **Ensure API is parsed:** Run `openapi-skills get-api-names` to verify API exists, or run `openapi-skills generate <spec-source> --base-url <url> --no-progress --rename<newApiName>` if needed.
-2. **Find the operation identifier:** Run `openapi-skills list --api <apiName>` with at least one schema-appropriate filter. Use `--method`/`--path` when the schema exposes OpenAPI operations, or `--root-type` when it exposes GraphQL root fields. Use `--filter` and `--index` as needed.
+2. **Find the operation identifier:** Run `openapi-skills list --api <apiName>` with at least one schema-appropriate filter. Use `--method`/`--path`/`--tag` when the schema exposes OpenAPI operations, or `--root-type` when it exposes GraphQL root fields. Use `--filter`, `--tag`, and `--index` as needed.
 3. **Get schema:** Run `openapi-skills generate-client-schema <operationId> --api <apiName>` to retrieve structured metadata for code generation.
 4. **Generate client code:** Using the schema output, write the TypeScript client class following the rules in this document.
 

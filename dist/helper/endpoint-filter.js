@@ -107,6 +107,13 @@ export function filterEndpoints(endpoints, opts) {
         const rootType = opts.rootType.toLowerCase();
         filtered = filtered.filter(e => (e.rootType || "").toLowerCase() === rootType);
     }
+    if (opts.tag) {
+        const tag = opts.tag.toLowerCase();
+        filtered = filtered.filter(endpoint => {
+            const endpointTags = Array.isArray(endpoint.tags) ? endpoint.tags : [];
+            return endpointTags.some(item => typeof item === "string" && item.toLowerCase() === tag);
+        });
+    }
     const pathClauses = normalizePathInputs(opts.path);
     if (pathClauses.length > 0) {
         filtered = filtered.filter(endpoint => {

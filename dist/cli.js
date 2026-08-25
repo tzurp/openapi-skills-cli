@@ -228,7 +228,7 @@ generateCmd.agentMeta = {
 };
 const listCmd = program
     .command("list")
-    .description("List summarized operation objects for the specified API as JSON. Supports --filter, --resolved/--dereferenced, --index slicing, and --count for operation totals. Also supports OpenAPI‑only options (--path, --method) and the GraphQL‑only option (--root-type). At least one filter is required unless --index : is used intentionally. GraphQL APIs reject --method and --path, and OpenAPI APIs reject --root-type.")
+    .description("List summarized operation objects for the specified API as JSON. Supports --filter, --tag, --resolved/--dereferenced, --index slicing, and --count for operation totals. Also supports OpenAPI‑only options (--path, --method) and the GraphQL‑only option (--root-type). At least one filter is required unless --index : is used intentionally. GraphQL APIs reject --method, --path, and --tag, and OpenAPI APIs reject --root-type.")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--count", "Return the number of operations after applying any list filters and index slicing. With no filters, returns the total operation count.")
     .option("--resolved, --dereferenced", "Show only operations that already have generated schema details saved.")
@@ -253,6 +253,7 @@ const listCmd = program
     return [...values, value];
 })
     .option("--filter <filterPattern>", "Filter operations by any of their searchable properties. Supports AND/OR (use spaces for AND, | for OR), e.g. --filter 'create account|register user'.")
+    .option("--tag <tag>", "Filter OpenAPI operations by an exact tag, case-insensitive.")
     .option("--method <method>", "Filter operations by HTTP method (GET, POST, etc). Use this for OpenAPI operations.")
     .option("--root-type <rootType>", "Filter GraphQL root fields by root type (query, mutation, or subscription).")
     .option("--index <range>", "Slice the filtered results with inclusive Python-like range syntax, e.g. 0:10, 5:, :10, -1, or :")
@@ -265,19 +266,21 @@ const listCmd = program
         const endpointsPath = getEndpointsPath(apiName);
         const schemaType = await getSchemaType(apiName);
         const resolveRequested = options.resolved === true || options.dereferenced === true;
-        const hasFilter = Boolean(options.path || options.filter || options.method || options.rootType || options.index || resolveRequested);
+        const hasFilter = Boolean(options.path || options.filter || options.tag || options.method || options.rootType || options.index || resolveRequested);
         const filterOpts = {};
         if (typeof options.path === "string" || Array.isArray(options.path))
             filterOpts.path = options.path;
         if (typeof options.filter === "string")
             filterOpts.filter = options.filter;
+        if (typeof options.tag === "string")
+            filterOpts.tag = options.tag;
         if (typeof options.method === "string")
             filterOpts.method = options.method;
         if (typeof options.rootType === "string")
             filterOpts.rootType = options.rootType;
-        if (schemaType === "graphql" && (typeof options.method === "string" || typeof options.path === "string")) {
+        if (schemaType === "graphql" && (typeof options.method === "string" || typeof options.path === "string" || typeof options.tag === "string")) {
             logger.result(buildError(ErrorCode.SCHEMA_TYPE_MISMATCH, {
-                summary: "--method and --path are only valid for OpenAPI APIs.",
+                summary: "--method, --path, and --tag are only valid for OpenAPI APIs.",
                 message: "This API is GraphQL. Use --root-type with --filter instead.",
                 context: { api_name: apiName, schema_type: schemaType },
                 nextCommand: `openapi-skills list --api ${apiName} --root-type query`,
@@ -297,7 +300,7 @@ const listCmd = program
         }
         if (!options.count && !hasFilter) {
             logger.result(buildError(ErrorCode.MISSING_FILTER_ARGUMENT, {
-                summary: "No filter provided. Use --path, --filter, --method, --root-type, or --index.",
+                summary: "No filter provided. Use --path, --filter, --tag, --method, --root-type, or --index.",
                 message: "The list command requires at least one filter to avoid returning large, unbounded result sets.",
                 context: { api_name: apiName },
                 nextCommand: `openapi-skills list --api ${apiName} --index :`,
@@ -330,6 +333,7 @@ const listCmd = program
             filtered = await filterResolvedEndpoints(apiName, filtered);
         }
         filtered = sliceEndpointsByIndex(filtered, options.index);
+        const outputEndpoints = filtered.map(({ tags, ...endpoint }) => endpoint);
         if (options.count) {
             logger.result(buildSuccess({
                 count: filtered.length,
@@ -342,22 +346,23 @@ const listCmd = program
                 apiName,
                 items: [],
             }, { kind: "endpoint-list" }));
-            if (options.path || options.filter || options.method || options.rootType || options.index || resolveRequested) {
+            if (options.path || options.filter || options.tag || options.method || options.rootType || options.index || resolveRequested) {
                 const pathValue = Array.isArray(options.path) ? options.path.join(", ") : options.path;
                 const pathMsg = pathValue ? `path "${pathValue}"` : "";
                 const filterMsg = options.filter ? `filter \"${options.filter}\"` : "";
+                const tagMsg = options.tag ? `tag \"${options.tag}\"` : "";
                 const methodMsg = options.method ? `method \"${options.method}\"` : "";
                 const rootTypeMsg = options.rootType ? `rootType \"${options.rootType}\"` : "";
                 const resolveMsg = resolveRequested ? `resolve` : "";
                 const indexMsg = options.index ? `index \"${options.index}\"` : "";
-                const msg = [pathMsg, filterMsg, methodMsg, rootTypeMsg, resolveMsg, indexMsg].filter(Boolean).join(", ");
+                const msg = [pathMsg, filterMsg, tagMsg, methodMsg, rootTypeMsg, resolveMsg, indexMsg].filter(Boolean).join(", ");
                 logger.warn(`No endpoints matched the ${msg}.`);
             }
             return;
         }
         logger.result(buildSuccess({
             apiName,
-            items: filtered,
+            items: outputEndpoints,
         }, { kind: "endpoint-list" }));
     }
     catch (error) {
@@ -372,17 +377,18 @@ const listCmd = program
 listCmd.agentMeta = {
     name: "list",
     category: "Navigation",
-    usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--method <method>] [--root-type <rootType>] [--index <range>]",
+    usage: "openapi-skills list --api <apiName> [--count] [--resolved|--dereferenced] [--path <path>]... [--filter <pattern>] [--tag <tag>] [--method <method>] [--root-type <rootType>] [--index <range>]",
     description: [
         "List operation summaries for a parsed API as JSON.",
         "At least one filter is required. --index is treated as a filter input, so the command can run when only a slice is requested.",
         "Use --count to return the number of operations after filtering and slicing, or --resolved to show only operations that already have generated schema details saved.",
-        "Filter usage differs by schema type: use --method and --path for OpenAPI operations, use --root-type for GraphQL root fields, and use --filter and --index with either schema. Filtering is case-insensitive and supports:",
+        "Filter usage differs by schema type: use --method, --path, and --tag for OpenAPI operations, use --root-type for GraphQL root fields, and use --filter and --index with either schema. Filtering is case-insensitive and supports:",
         "- Path prefix: --path '/users' (matches operations whose path begins with the prefix)",
         "- Parameter detection: --path :param (matches operations that contain at least one '{...}' path placeholder)",
         "- Segment matching: --path 'store order' (matches endpoints whose path contains both segments)",
         "- OR within a single path clause: --path 'store|shop' (matches either segment)",
         "- Multiple path flags are ANDed: --path /store --path order",
+        "- Exact tag matching: --tag pet (matches OpenAPI operations whose tag is exactly 'pet', ignoring case)",
         "- Simple substring filtering: --filter 'user account' (matches operations containing both 'user' and 'account' in any field, including GraphQL name/rootType fields)",
         "- OR filtering: --filter 'create|register|signup' (matches any operation containing any of the words)",
         "- Combined AND+OR: --filter 'create account|register user' (matches operations containing both 'create' and 'account', OR both 'register' and 'user')",
@@ -416,6 +422,7 @@ listCmd.agentMeta = {
         { name: "resolved", type: "flag", required: false, flag: true, description: "Show only operations that already have generated schema details saved. Alias: --dereferenced." },
         { name: "path", type: "string[]", required: false, flag: true, description: "Filter operations by path structure." },
         { name: "filter", type: "string", required: false, flag: true, description: "Filter operations by keywords, operationId/name, rootType, path, summary, or description." },
+        { name: "tag", type: "string", required: false, flag: true, description: "Filter OpenAPI operations by an exact tag, case-insensitive." },
         { name: "method", type: "string", required: false, flag: true, description: "Filter OpenAPI operations by HTTP method." },
         { name: "rootType", type: "string", required: false, flag: true, description: "Filter GraphQL operations by root type (query, mutation, or subscription)." },
         { name: "index", type: "string", required: false, flag: true, description: "Slice the filtered results with inclusive Python-like range syntax." }
@@ -424,6 +431,7 @@ listCmd.agentMeta = {
         "openapi-skills list --api petstore",
         "openapi-skills list --api petstore --count",
         "openapi-skills list --api petstore --resolved",
+        "openapi-skills list --api petstore --tag pet",
         "openapi-skills list --api petstore --path /users",
         "openapi-skills list --api petstore --path /store --path order",
         "openapi-skills list --api petstore --path 'store order'",

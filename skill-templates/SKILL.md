@@ -95,11 +95,12 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - When `response: null`, generate `Promise<void>`.
 
 ### 4. REQUIRED: Always apply filters to narrow operation results
-- Never run `list` without at least one schema-appropriate filter. Valid filters include `--method`, `--path`, `--root-type`, `--filter`, and `--index`.
-- Prefer the schema-appropriate filter first, then add `--filter`, `--index`, or `--resolved` as needed. Use `--method`/`--path` when the schema exposes OpenAPI operations, and `--root-type` when it exposes GraphQL root fields.
+- Never run `list` without at least one schema-appropriate filter. Valid filters include `--method`, `--path`, `--tag`, `--root-type`, `--filter`, and `--index`.
+- Prefer the schema-appropriate filter first, then add `--filter`, `--tag`, `--index`, or `--resolved` as needed. Use `--method`/`--path`/`--tag` when the schema exposes OpenAPI operations, and `--root-type` when it exposes GraphQL root fields.
 - Use zero-based `--index` values, or index ranges like `0:5` to limit results.
 - Use `--count` first when exploring an unknown API.
 - Example: `openapi-skills list --api petstore --method GET --path /pet --index 0:5`.
+- OpenAPI tag example: `openapi-skills list --api petstore --tag pet --index 0:5`.
 - GraphQL example: `openapi-skills list --api graphql-api --root-type query --filter user --index 0:5`.
 - If you only want operations that already have generated schema details saved, add `--resolved` (alias `--dereferenced`).
 
@@ -159,7 +160,7 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 
 1. Check existing APIs with `openapi-skills get-api-names`.
 2. If not listed, parse the spec with `openapi-skills generate ...`. Do not rerun `generate` unless the API has never been parsed or is stale.
-3. List operations with a schema-appropriate filter, then narrow with `--filter`, `--index`, or `--resolved` as needed.
+3. List operations with a schema-appropriate filter, then narrow with `--filter`, `--tag`, `--index`, or `--resolved` as needed.
 4. Inspect the target operation with `openapi-skills generate-client-schema <operationId> --api <apiName>`.
 
 ### Generate Operation Test
@@ -193,3 +194,30 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 ### Update Request Template
 
 Use `request --force` to reset the request artifact, `--update-request` to patch existing fields, and `"__delete__"` to remove fields entirely. Inspect the artifact after each change.
+
+When patching request JSON, match the shell you are actually running:
+
+- **PowerShell:** wrap the JSON in single quotes and escape inner double quotes with backslashes. Example:
+  ```powershell
+  openapi-skills request adminAuthVerify --api parkingLot --update-request '{\"requestBody.phone\":\"0500000001\",\"requestBody.code\":\"593204\"}'
+  ```
+- **Bash / WSL:** use normal single-quoted JSON. Example:
+  ```bash
+  openapi-skills request adminAuthVerify --api parkingLot --update-request '{"requestBody.phone":"0500000001","requestBody.code":"593204"}'
+  ```
+
+If you are on Windows and inline `--update-request` quoting breaks before the command reaches Bash, stop fighting it and pipe a literal bash script to `wsl bash` instead:
+
+```powershell
+@'
+cd /mnt/c/.../test-automation
+openapi-skills request adminAuthVerify --api parkingLot --update-request '{"requestBody.phone":"0500000001","requestBody.code":"593204"}'
+openapi-skills get-operation adminAuthVerify --api parkingLot --response
+'@ | wsl bash
+```
+
+**“When piping `@'…'@ | wsl bash`, strip `\r` if flags fail with a `\r` suffix — this indicates CRLF line endings from PowerShell are breaking the script.”**
+
+Fix it by converting the here-string to LF-only line endings before piping, or by stripping `\r` from the script text.
+
+After every update, verify the result with `openapi-skills get-operation <operationId> --api <apiName> --response`.

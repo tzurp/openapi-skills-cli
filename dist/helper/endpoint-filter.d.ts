@@ -5,10 +5,12 @@ export declare function filterEndpoints(endpoints: Array<Record<string, any>>, o
     method?: string;
     rootType?: string;
     operationId?: string;
+    tag?: string;
 }): Array<Record<string, any>>;
 export declare function filterResolvedEndpoints(apiName: string, endpoints: Array<Record<string, any>>): Promise<Array<Record<string, any>>>;
 export declare function anyEndpointMatches(endpoints: Array<Record<string, any>>, opts: {
     path?: string | string[];
     filter?: string;
     method?: string;
+    tag?: string;
 }): boolean;

@@ -270,6 +270,14 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
                             method,
                             path: pathKey,
                         };
+                        if (Array.isArray(typedOperation.tags)) {
+                            const tags = typedOperation.tags
+                                .map(tag => typeof tag === "string" ? tag.trim() : "")
+                                .filter((tag) => tag.length > 0);
+                            if (tags.length > 0) {
+                                endpointSummary.tags = tags;
+                            }
+                        }
                         if (typedOperation.summary !== undefined) {
                             endpointSummary.summary = typedOperation.summary;
                         }

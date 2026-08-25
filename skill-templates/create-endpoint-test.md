@@ -43,7 +43,7 @@ Every generated test file must start with:
    - If not found, offer to parse it
 
 ### Step 2: Retrieve Operation Metadata
-1. Run `openapi-skills list --api <apiName>` with at least one filter. Valid filters include `--method`, `--path`, `--root-type`, `--filter`, and `--index`. Use the schema-appropriate filters; `--filter` and `--index` can be combined with either schema.
+1. Run `openapi-skills list --api <apiName>` with at least one filter. Valid filters include `--method`, `--path`, `--tag`, `--root-type`, `--filter`, and `--index`. Use the schema-appropriate filters; `--filter`, `--tag`, and `--index` can be combined with either schema.
 2. Extract:
    - OpenAPI: `operationId`, `method`, `path`
    - GraphQL: `name`, `rootType`
