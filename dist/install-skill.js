@@ -2,7 +2,6 @@ import * as fs from "node:fs/promises";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
-import { getProjectRoot } from "./helper/paths.js";
 import { logger } from "./helper/logger.js";
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 function renderBoolean(value) {
@@ -66,13 +65,12 @@ async function getCommandReferenceMarkdown() {
         .filter(command => command.agentMeta.name !== "help" && command.agentMeta.name !== "install");
     return agentCommands.map(command => renderCommandSection(command.agentMeta)).join("\n\n");
 }
-export async function promptInstallLocation(defaultPath) {
-    const homeDir = getProjectRoot();
+export async function promptInstallLocation(rootDir, defaultPath) {
     const menu = [
-        { label: `~/.claude/skills/openapi-skills`, value: path.join(homeDir, ".claude", "skills", "openapi-skills") },
-        { label: `~/.cursor/skills/openapi-skills`, value: path.join(homeDir, ".cursor", "skills", "openapi-skills") },
-        { label: `~/.agents/skills/openapi-skills`, value: path.join(homeDir, ".agents", "skills", "openapi-skills") },
-        { label: `~/.github/skills/openapi-skills`, value: path.join(homeDir, ".github", "skills", "openapi-skills") },
+        { label: `~/.claude/skills/openapi-skills`, value: path.join(rootDir, ".claude", "skills", "openapi-skills") },
+        { label: `~/.cursor/skills/openapi-skills`, value: path.join(rootDir, ".cursor", "skills", "openapi-skills") },
+        { label: `~/.agents/skills/openapi-skills`, value: path.join(rootDir, ".agents", "skills", "openapi-skills") },
+        { label: `~/.github/skills/openapi-skills`, value: path.join(rootDir, ".github", "skills", "openapi-skills") },
         { label: "Other (enter a custom path)", value: "__custom__" }
     ];
     function ask(question) {

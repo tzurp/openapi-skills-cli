@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { parseSchemaSource, validateSchema } from "./parser.js";
 import fs from "fs-extra";
 import path from "path";
+import os from "os";
 import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
 import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, loadConfig } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
@@ -74,19 +75,30 @@ Project: ${url}
 `);
 program
     .command("install")
-    .description("Install SKILL.md and scenario markdowns for agent frameworks like Claude and GitHub Copilot. Supports: --skills.")
+    .description("Install SKILL.md and scenario markdowns for agent frameworks like Claude and GitHub Copilot. Supports: --skills [--global].")
     .option("--skills", "Install SKILL.md files for agent frameworks.")
+    .option("--global", "Install the skill bundle under the user's home directory instead of the current project.")
     .action(async (options) => {
+    if (options.global && !options.skills) {
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "--global requires --skills.",
+            message: "Use `openapi-skills install --skills --global` to install the skill bundle under your home directory.",
+            context: {},
+            nextCommand: "openapi-skills install --skills --global",
+        }));
+        process.exitCode = 1;
+        return;
+    }
     if (!options.skills) {
         await ensureConfig();
         logger.info(".openapi-skills directory and configuration installed. Use --skills to install SKILL.md files for agent frameworks.");
         return;
     }
-    const cwd = getProjectRoot();
-    const srcDir = cwd;
-    const defaultInstallPath = path.join(cwd, "installed-skills");
+    const rootDir = options.global ? os.homedir() : getProjectRoot();
+    const srcDir = getProjectRoot();
+    const defaultInstallPath = path.join(rootDir, "installed-skills");
     logger.info(`Source directory (copied): ${srcDir}`);
-    const installPath = await promptInstallLocation(defaultInstallPath);
+    const installPath = await promptInstallLocation(rootDir, defaultInstallPath);
     logger.info(`Target install directory: ${installPath}`);
     try {
         const result = await installSkillBundle(srcDir, installPath);

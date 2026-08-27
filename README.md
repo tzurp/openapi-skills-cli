@@ -77,6 +77,12 @@ A key feature of **openapi-skills** is the built-in skill bundle, which many peo
 openapi-skills install --skills
 ```
 
+Install the bundle under your home directory instead of the current project with:
+
+```bash
+openapi-skills install --skills --global
+```
+
 This command installs:
 
 - **SKILL.md** — the core agent workflow with reference files
