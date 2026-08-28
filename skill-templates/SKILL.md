@@ -16,10 +16,13 @@ On the first message in any conversation, explicitly state that you are using th
 
 Before doing anything else, check these first:
 
-0. 🪟 ON WINDOWS POWERSHELL?
-   - If you are about to pass `--auth` or `--header` with a Bearer token or JWT, read [JSON Quoting Rules](#json-quoting-rules) before your first attempt.
-   - If you are about to use `--update-request` with any string value that contains spaces, read [JSON Quoting Rules](#json-quoting-rules) before your first attempt.
-   - Escaping inner quotes only solves invalid JSON. It does NOT stop PowerShell from splitting arguments when values contain spaces, dots, or other shell-sensitive characters.
+0. Use the encoded flags when quoting is fragile.
+   - Prefer `--update-request-encoded`, `--header-encoded`, and `--auth-encoded` when JSON literals might be mangled by PowerShell, cmd, an agent, or another shell layer.
+   - Pass the JSON after encoding it to base64url for those flags.
+   - For auth headers, encode the final header object as-is. Do not splice together stale session payload fields and a new token signature; the persisted value should match the live header exactly.
+   - When persisting auth, treat the live token or header object as the source of truth, encode it programmatically, and verify the saved value with `get-env` before trusting it.
+   - If the shell supports it, prefer one pipeline or scripted flow that reads the live token, builds the header object, base64url-encodes it, persists it with `set-env --auth-encoded`, and then checks the round trip with `get-env`.
+   - If a live `request` command fails in the agent shell but works in a manual terminal, request elevated execution and prefer re-running `request` with elevated privileges before treating it as a CLI bug.
 
 1. ⚠️ ABSOLUTE PROHIBITION
 You MUST NOT interact with ANY file or directory under `.openapi-skills/` at ANY depth. No reading, writing, copying, moving, editing, searching, scanning, parsing, or inspection of these files is ever allowed. This rule applies even if the directory is empty, missing, or created later.
@@ -196,48 +199,6 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 3. Patch values from earlier responses into the next request using flattened dot-notation keys.
 4. Inspect each response before moving to the next step.
 
-### JSON Quoting Rules
-
-Any flag that accepts JSON must follow shell-specific quoting rules. This includes `--request`, `--params`, `--body`, `--auth`, `--header`, `--update-request`, `--update-response`, and similar flags.
-
-- **PowerShell, simple JSON values:** wrap JSON in single quotes and escape inner double quotes with backslashes. Example:
-  ```powershell
-  openapi-skills request adminAuthVerify --api parkingLot --update-request '{\"requestBody.phone\":\"0500000001\",\"requestBody.code\":\"593204\"}'
-  ```
-- **PowerShell, not just quoting:** escaping is NOT enough when the value itself contains spaces, JWT dots, or other shell-sensitive characters. This is common with `--auth`, `--header`, and long `--update-request` string values. In those cases, use the WSL escape hatch below instead of trying more PowerShell escaping.
-- **Bash / WSL:** use normal single-quoted JSON. Example:
-  ```bash
-  openapi-skills request adminAuthVerify --api parkingLot --update-request '{"requestBody.phone":"0500000001","requestBody.code":"593204"}'
-  ```
-- **Windows escape hatch:** if inline JSON breaks before Bash sees it, pipe a literal bash script to `wsl bash` instead. This is the required route for JWT-style auth headers and for `--update-request` values that contain spaces.
-  ```powershell
-  $script = @'
-  cd /mnt/c/Users/Tzur/source/repo/openapi-skills
-  openapi-skills set-env --api parkingLot --auth '{"Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}'
-  '@
-  $script = $script -replace "`r", ""
-  $script | wsl bash
-  ```
-- **CRLF warning:** when piping `@'…'@ | wsl bash`, strip `\r` if flags fail with a `\r` suffix. This means PowerShell line endings are breaking the script. Fix it by converting the here-string to LF-only line endings or stripping `\r` from the script text.
-
-### PowerShell: what to use when
-
-Use this as the decision tree:
-
-```text
-Are you on PowerShell?
-├─ Simple JSON with short values, no spaces, no JWTs -> escaped single-quoted JSON
-└─ `--auth` / `--header` with Bearer tokens or JWTs, or `--update-request` values with spaces -> WSL bash here-string
-```
-
-### Common failures and fixes
-
-| Error | Likely cause | Fix |
-|-------|--------------|-----|
-| `too many arguments for 'set-env'` | PowerShell split the JWT or header value into multiple argv items | Use the WSL bash here-string pattern |
-| `Duplicate operationId(s)...` with a space in the name | A space in `--update-request` or another JSON string got split before the CLI saw it | Use WSL bash, or avoid inline values with spaces |
-| `INVALID_JSON_ARGUMENT` | The JSON is not valid after shell parsing | Fix the `\"` escaping first; if the value itself contains spaces or tokens, switch to WSL |
-
 ### Update Request Template
 
-Use `request --force` to reset the request artifact, `--update-request` to patch existing fields, and `"__delete__"` to remove fields entirely. For JSON payloads, follow [JSON Quoting Rules](#json-quoting-rules). Inspect the artifact after each change.
+Use `request --force` to reset the request artifact, `--update-request` to patch existing fields, `--update-request-encoded` with base64url-encoded JSON when the JSON may be mangled by a shell or agent, and `"__delete__"` to remove fields entirely. For auth headers, prefer a single pipeline or scripted flow that reads the live token, builds the exact header object, encodes it programmatically, persists it with `set-env --auth-encoded`, and verifies it with `get-env` before trusting the saved value. Inspect the artifact after each change.

@@ -20,6 +20,7 @@ import { collectRequestJsonPaths, collectUpdateRequestKeys, resolveSelectedArtif
 import { prepareMultiOperationRequests, getRequestResponseMetadata } from "./helper/request-preparation.js";
 import { filterArray, getByPath } from "./helper/dotNotation.js";
 import { parseGetOperationFilter } from "./helper/get-operation-filter.js";
+import { decodeBase64UrlJsonObject } from "./helper/base64url-json.js";
 import { buildError, buildSuccess } from "./helper/error-formatter.js";
 import { ErrorCode } from "./helper/error-codes.js";
 import { isTypeScriptUnavailableError, typescriptInstallCommand } from "./helper/graphql.js";
@@ -851,7 +852,7 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --header (add headers).")
+    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --update-request-encoded (patch request artifact using base64url-encoded JSON), --header (add headers), --header-encoded (add headers using base64url-encoded JSON).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists.")
     .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
@@ -870,11 +871,23 @@ const requestCmd = program
     "   --update-request '{\"address.street\":\"Main St\",\"address.zip\":12345}'",
     "Note: The CLI runs JSON.parse on the provided value; if parsing fails the command exits with an error."
 ].join("\n"))
+    .option("--update-request-encoded <base64url>", [
+    "Patch request artifact before making the request using base64url-encoded JSON.",
+    "Use this when a shell or agent may strip quotes from literal JSON.",
+    "Example:",
+    "  --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9"
+].join("\n"))
     .option("--header <json>", [
     "Additional headers as a JSON string (merged with config and defaults).",
     "Format: --header '{\"Header-Name\":\"value\"}'",
     "Example:",
     "  --header '{\"X-Api-Key\":\"abc\"}'"
+].join("\n"))
+    .option("--header-encoded <base64url>", [
+    "Additional headers as base64url-encoded JSON (merged with config and defaults).",
+    "Use this when a shell or agent may strip quotes from literal JSON.",
+    "Example:",
+    "  --header-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9"
 ].join("\n"))
     .action(async (operationIds, options) => {
     const apiName = options.api;
@@ -915,6 +928,16 @@ const requestCmd = program
     }
     let requestJsonUpdates;
     let requestJsonWarnings;
+    if (options.updateRequest && options.updateRequestEncoded) {
+        logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+            summary: "Specify only one of --update-request or --update-request-encoded.",
+            message: "Choose the raw JSON form or the base64url-encoded form, not both.",
+            context: { api_name: apiName, operation_id: operationId },
+            nextCommand: `openapi-skills request ${operationId} --api ${apiName} --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
+        }));
+        process.exitCode = 2;
+        return;
+    }
     if (options.updateRequest) {
         let updates;
         try {
@@ -993,6 +1016,94 @@ const requestCmd = program
         }
         requestJsonUpdates = updates;
     }
+    if (options.updateRequestEncoded) {
+        let updates;
+        try {
+            updates = decodeBase64UrlJsonObject(options.updateRequestEncoded, "--update-request-encoded");
+        }
+        catch (err) {
+            const message = `Invalid base64url for --update-request-encoded: ${err instanceof Error ? err.message : String(err)}`;
+            logger.result(buildError(ErrorCode.INVALID_UPDATE_REQUEST_JSON, {
+                summary: "--update-request-encoded value is malformed.",
+                message,
+                context: { api_name: apiName, operation_id: operationId, update_request_encoded: options.updateRequestEncoded },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
+        if (typeof updates !== "object" || Array.isArray(updates) || !updates || Object.keys(updates).length === 0) {
+            logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+                summary: "--update-request-encoded must decode to a non-empty JSON object.",
+                message: "The decoded payload must contain at least one flattened dot-notation key.",
+                context: { api_name: apiName, operation_id: operationId, update_request_encoded: options.updateRequestEncoded },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
+        const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
+        const requestJsonPath = getOperationArtifactPath(apiName, sanitizedOperationId, "request");
+        if (options.force === true) {
+            const config = await loadConfig();
+            const configuredSchemaType = config.apis?.[apiName]?.schemaType;
+            let isGraphQLSchema = configuredSchemaType === "graphql";
+            if (!isGraphQLSchema && configuredSchemaType !== "openapi") {
+                try {
+                    const endpoints = await fs.readJson(getEndpointsPath(apiName));
+                    isGraphQLSchema = Array.isArray(endpoints) && endpoints.some((endpoint) => typeof endpoint?.rootType === "string");
+                }
+                catch {
+                    isGraphQLSchema = false;
+                }
+            }
+            if (!isGraphQLSchema) {
+                await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
+            }
+            await prepareRequestTemplate(apiName, sanitizedOperationId, true);
+        }
+        else if (!(await fs.pathExists(requestJsonPath))) {
+            logger.result(buildError(ErrorCode.REQUEST_TEMPLATE_STALE, {
+                summary: "request.json does not exist for this operation.",
+                message: "--update-request-encoded requires an existing request.json artifact. Use --force to regenerate the request template.",
+                context: { api_name: apiName, operation_id: operationId, artifact_type: "request" },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
+        const requestJson = await fs.readJson(requestJsonPath);
+        const requestJsonKeys = collectRequestJsonPaths(requestJson);
+        const updateKeys = collectUpdateRequestKeys(updates);
+        const missingKeys = Array.from(updateKeys).filter(key => !requestJsonKeys.has(key));
+        if (missingKeys.length > 0) {
+            logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+                summary: "--update-request-encoded contains keys not present in request.json.",
+                message: `The following keys are missing from request.json: ${missingKeys.join(", ")}.`,
+                context: { api_name: apiName, operation_id: operationId, update_request_encoded: options.updateRequestEncoded, missing_keys: missingKeys },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
+        if (options.force === true) {
+            const typeWarnings = collectRequestUpdateTypeWarnings(requestJson, updates);
+            if (typeWarnings.length > 0) {
+                requestJsonWarnings = typeWarnings;
+            }
+        }
+        requestJsonUpdates = updates;
+    }
+    if (options.header && options.headerEncoded) {
+        logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+            summary: "Provide only one of --header or --header-encoded.",
+            message: "--header and --header-encoded are mutually exclusive.",
+            context: { api_name: apiName, operation_id: operationId, header: options.header, header_encoded: options.headerEncoded },
+            nextCommand: `openapi-skills request ${operationId} --api ${apiName} --header-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9`,
+        }));
+        process.exitCode = 2;
+        return;
+    }
     let cliHeaders = undefined;
     if (options.header) {
         try {
@@ -1008,6 +1119,22 @@ const requestCmd = program
                 message,
                 context: { header: options.header },
                 nextCommand: `openapi-skills request ${operationId} --api ${apiName} --header '{"Header-Name":"value"}'`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
+    }
+    if (options.headerEncoded) {
+        try {
+            cliHeaders = decodeBase64UrlJsonObject(options.headerEncoded, "--header-encoded");
+        }
+        catch (err) {
+            const message = `Invalid base64url for --header-encoded: ${err instanceof Error ? err.message : String(err)}`;
+            logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+                summary: "--header-encoded value is malformed.",
+                message,
+                context: { header_encoded: options.headerEncoded },
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --header-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9`,
             }));
             process.exitCode = 2;
             return;
@@ -1084,13 +1211,13 @@ const requestCmd = program
 requestCmd.agentMeta = {
     name: "request",
     category: "Validation",
-    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--header <json>]",
+    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--update-request-encoded <base64url>] [--header <json>] [--header-encoded <base64url>]",
     description: [
         "Make a live HTTP request for an operation, or prepare a multi-step request scenario without executing requests.",
         "When multiple operationIds are supplied, the command enters prepare-only mode and refreshes request artifact templates for the scenario.",
         "With --validate, validate only the response against the schema after the request is sent.",
         "With --force, regenerate the request artifact from schema defaults.",
-        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. Binary fields can be set to a file path string or a file descriptor object. Set a field to \"__delete__\" to remove it."
+        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. With --update-request-encoded, pass base64url-encoded JSON instead. With --header, merge JSON headers into the request. With --header-encoded, pass base64url-encoded JSON headers instead. Binary fields can be set to a file path string or a file descriptor object. Set a field to \"__delete__\" to remove it."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
@@ -1098,14 +1225,18 @@ requestCmd.agentMeta = {
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists." },
         { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
         { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Binary fields can be set to a file path string or file descriptor object. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
-        { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." }
+        { name: "update-request-encoded", type: "string", required: false, flag: true, description: "Patch request artifact before making the request using base64url-encoded JSON. Use this when quoting is unreliable." },
+        { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." },
+        { name: "header-encoded", type: "string", required: false, flag: true, description: "Additional headers as base64url-encoded JSON. Use this when quoting is unreliable." }
     ],
     examples: [
         "openapi-skills request getPetById --api petstore",
         "openapi-skills request getPetById --api petstore --validate",
         "openapi-skills request getPetById --api petstore --force --update-request '{\"user.profile.name\":\"Ada\"}'",
+        "openapi-skills request getPetById --api petstore --force --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9",
         "openapi-skills request getPetById --api petstore --update-request '{\"user.profile.name\":\"Ada\"}'",
         "openapi-skills request getPetById --api petstore --update-request '{\"parameters.0.id\":1}'",
+        "openapi-skills request getPetById --api petstore --header-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9",
         "openapi-skills request getPetById --api petstore --update-request '{\"parameters.0\":\"__delete__\"}'",
         "openapi-skills request operationId1 operationId2 --api petstore"
     ],
@@ -1130,6 +1261,7 @@ const setEnvCmd = program
     .requiredOption("--api <apiName>", "API name to use")
     .option("--base-url <url>", "Base URL for the API environment.")
     .option("--auth <json>", "Authentication headers as a JSON string.")
+    .option("--auth-encoded <base64url>", "Authentication headers as base64url-encoded JSON. Use this when a shell or agent may strip quotes from literal JSON.")
     .option("--var <key=value>", "Set a runtime variable for the API environment. Repeatable.", (value, previous) => {
     const values = Array.isArray(previous) ? previous : previous ? [previous] : [];
     return [...values, value];
@@ -1137,9 +1269,11 @@ const setEnvCmd = program
     .description("Set or update the runtime environment for a parsed API.")
     .addHelpText('after', [
     "Use this command to set baseUrl, auth headers, and runtime vars for a parsed API.",
+    "Pass auth headers with --auth as JSON or --auth-encoded as base64url-encoded JSON when quoting is unreliable.",
     "",
     "Examples:",
     "  set-env --api petstore --base-url https://dev.example.com --auth '{\"Authorization\":\"Bearer abc\"}'",
+    "  set-env --api petstore --auth-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9",
     "  set-env --api petstore --auth '{\"Authorization\":\"Bearer abc\"}'",
     "  set-env --api petstore --var userId=123"
 ].join("\n"))
@@ -1151,6 +1285,16 @@ const setEnvCmd = program
     const providedBaseUrl = typeof options.baseUrl === "string" ? options.baseUrl.trim() : "";
     const baseUrl = providedBaseUrl.length > 0 ? providedBaseUrl : undefined;
     let auth;
+    if (typeof options.auth === "string" && typeof options.authEncoded === "string") {
+        logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+            summary: "Provide only one of --auth or --auth-encoded.",
+            message: "--auth and --auth-encoded are mutually exclusive.",
+            context: { api_name: apiName, auth: options.auth, auth_encoded: options.authEncoded },
+            nextCommand: `openapi-skills set-env --api ${apiName} --auth-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9`,
+        }));
+        process.exitCode = 1;
+        return;
+    }
     if (typeof options.auth === "string") {
         try {
             const parsedAuth = JSON.parse(options.auth);
@@ -1165,6 +1309,29 @@ const setEnvCmd = program
                 message: "Invalid --auth JSON. Example: '{\"Authorization\":\"Bearer abc\"}'",
                 context: { api_name: apiName, auth: options.auth ?? null },
                 nextCommand: `openapi-skills set-env --api ${apiName} --auth '{\"Authorization\":\"Bearer abc\"}'`,
+            }));
+            process.exitCode = 1;
+            return;
+        }
+    }
+    if (typeof options.authEncoded === "string") {
+        try {
+            const decodedAuth = decodeBase64UrlJsonObject(options.authEncoded, "--auth-encoded");
+            const normalizedAuth = {};
+            for (const [key, value] of Object.entries(decodedAuth)) {
+                if (typeof value !== "string") {
+                    throw new Error(`Auth header "${key}" must be a string`);
+                }
+                normalizedAuth[key] = value;
+            }
+            auth = normalizedAuth;
+        }
+        catch (err) {
+            logger.result(buildError(ErrorCode.INVALID_JSON_ARGUMENT, {
+                summary: "--auth-encoded value is malformed.",
+                message: `Invalid base64url for --auth-encoded: ${err instanceof Error ? err.message : String(err)}`,
+                context: { api_name: apiName, auth_encoded: options.authEncoded },
+                nextCommand: `openapi-skills set-env --api ${apiName} --auth-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9`,
             }));
             process.exitCode = 1;
             return;
@@ -1227,16 +1394,18 @@ const setEnvCmd = program
 setEnvCmd.agentMeta = {
     name: "set-env",
     category: "Configuration",
-    usage: "openapi-skills set-env --api <apiName> [--base-url <url>] [--auth <json>] [--var key=value]",
+    usage: "openapi-skills set-env --api <apiName> [--base-url <url>] [--auth <json>] [--auth-encoded <base64url>] [--var key=value]",
     description: "Set or update the runtime environment for a parsed API. Persists baseUrl, auth headers, and named vars in config.json.",
     arguments: [
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "base-url", type: "string", required: false, flag: true, description: "Base URL for the API environment." },
         { name: "auth", type: "json", required: false, flag: true, description: "Authentication headers as a JSON object." },
+        { name: "auth-encoded", type: "string", required: false, flag: true, description: "Authentication headers as base64url-encoded JSON." },
         { name: "var", type: "string", required: false, flag: true, description: "Runtime variable in key=value form. Repeatable." }
     ],
     examples: [
         "openapi-skills set-env --api petstore --base-url https://dev.example.com --auth '{\"Authorization\":\"Bearer abc\"}'",
+        "openapi-skills set-env --api petstore --auth-encoded eyJBdXRob3JpemF0aW9uIjoiQmVhcmVyIGFiYyJ9",
         "openapi-skills set-env --api petstore --auth '{\"Authorization\":\"Bearer abc\"}'",
         "openapi-skills set-env --api petstore --var userId=123 --var env=staging"
     ],

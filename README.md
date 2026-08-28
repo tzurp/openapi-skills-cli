@@ -391,14 +391,15 @@ Supports:
 
 - `--validate` (validate only the response against the schema after the request is sent; it does not validate the request body or guarantee a response exists, and it suppresses request/response output)
 - `--force` (regenerate request.json; use before `--update-request` when you want the original schema-shaped template)
-- `--update-request` (patch request.json; pass a JSON string of flattened dot-notation keys — single-quote in POSIX shells). Invalid JSON will cause the command to fail.
+- `--update-request` (patch request.json; pass a JSON string of flattened dot-notation keys — single-quote in POSIX shells). `--update-request-encoded` is the agent-safe base64url form. Invalid JSON will cause the command to fail.
 - `--header` (add headers)
+- `--header-encoded` (add headers as base64url-encoded JSON)
 
 Prepare-only mode:
 
 - `openapi-skills request <operationId...> --api <apiName>` prepares templates for multiple operations without making live requests
 - `--force` refreshes all templates from schema defaults
-- `--validate`, `--update-request`, and `--header` are ignored in prepare-only mode
+- `--validate`, `--update-request`, `--update-request-encoded`, `--header`, and `--header-encoded` are ignored in prepare-only mode
 - The command prints a deterministic summary plus structured JSON metadata for each prepared operation
 
 Live request validation:
@@ -433,6 +434,7 @@ Supports:
 
 - `--base-url` (persist the API base URL)
 - `--auth` (persist authentication headers as JSON)
+- `--auth-encoded` (persist authentication headers as base64url-encoded JSON)
 - `--var` (repeatable key=value runtime vars)
 
 Example:
