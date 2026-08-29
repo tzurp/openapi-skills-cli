@@ -471,6 +471,9 @@ The `--silent` flag hides the banner in the help output.
 Show the CLI version.
 
 ---
+## demo
+
+[demo](https://github.com/tzurp/openapi-skills-cli/releases#release-video)
 
 ## License
 MIT License  
