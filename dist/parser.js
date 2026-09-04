@@ -108,6 +108,106 @@ function findEndpointInPaths(pathsObject, operationId) {
     }
     return undefined;
 }
+function buildOpenApiEndpointSummaries(pathsObject) {
+    const endpoints = [];
+    for (const [pathKey, methods] of Object.entries(pathsObject)) {
+        for (const [method, operation] of Object.entries(methods)) {
+            if (operation && typeof operation === "object" && "operationId" in operation) {
+                const typedOperation = operation;
+                if (typedOperation.operationId) {
+                    const endpointSummary = {
+                        operationId: typedOperation.operationId,
+                        sanitizedOperationId: sanitizeOperationPath(typedOperation.operationId),
+                        method,
+                        path: pathKey,
+                    };
+                    if (Array.isArray(typedOperation.tags)) {
+                        const tags = typedOperation.tags
+                            .map(tag => typeof tag === "string" ? tag.trim() : "")
+                            .filter((tag) => tag.length > 0);
+                        if (tags.length > 0) {
+                            endpointSummary.tags = tags;
+                        }
+                    }
+                    if (typedOperation.summary !== undefined) {
+                        endpointSummary.summary = typedOperation.summary;
+                    }
+                    if (typedOperation.description !== undefined) {
+                        endpointSummary.description = typedOperation.description;
+                    }
+                    endpoints.push(endpointSummary);
+                }
+            }
+        }
+    }
+    return endpoints;
+}
+function buildGraphQLEndpointSummaries(endpoints) {
+    return endpoints
+        .map(endpoint => {
+        const rootType = typeof endpoint.rootType === "string"
+            ? endpoint.rootType
+            : typeof endpoint.method === "string"
+                ? endpoint.method
+                : "";
+        if (rootType !== "query" && rootType !== "mutation" && rootType !== "subscription") {
+            return null;
+        }
+        const name = typeof endpoint.name === "string"
+            ? endpoint.name
+            : typeof endpoint.operationId === "string"
+                ? endpoint.operationId
+                : "";
+        if (!name) {
+            return null;
+        }
+        const summary = {
+            name,
+            rootType,
+        };
+        if (typeof endpoint.sanitizedOperationId === "string" && endpoint.sanitizedOperationId.length > 0) {
+            summary.sanitizedOperationId = endpoint.sanitizedOperationId;
+        }
+        if (typeof endpoint.summary === "string") {
+            summary.summary = endpoint.summary;
+        }
+        if (typeof endpoint.description === "string") {
+            summary.description = endpoint.description;
+        }
+        return summary;
+    })
+        .filter((endpoint) => endpoint !== null);
+}
+export async function ensureEndpointsFile(apiName, force = false) {
+    const endpointsPath = getEndpointsPath(apiName);
+    if (!force && await fs.pathExists(endpointsPath)) {
+        return await fs.readJson(endpointsPath);
+    }
+    const bundledPath = getBundledPath(apiName);
+    const bundled = await fs.readJson(bundledPath);
+    if (bundled && typeof bundled === "object" && bundled.schemaType === "graphql") {
+        const sourceText = typeof bundled.source === "string"
+            ? bundled.source
+            : typeof bundled.sourceText === "string"
+                ? bundled.sourceText
+                : undefined;
+        if (!sourceText) {
+            throw new Error(`GraphQL source not found for API '${apiName}'. Run generate first.`);
+        }
+        const extractedEndpoints = await extractGraphQLEndpoints(sourceText, apiName);
+        const endpointSummaries = buildGraphQLEndpointSummaries(extractedEndpoints);
+        await fs.ensureDir(path.dirname(endpointsPath));
+        await fs.writeJson(endpointsPath, endpointSummaries, { spaces: 2 });
+        return endpointSummaries;
+    }
+    if (!bundled || typeof bundled !== "object" || !("paths" in bundled)) {
+        throw new Error(`Bundled OpenAPI document not found for API '${apiName}'. Run generate first.`);
+    }
+    const endpointSummaries = buildOpenApiEndpointSummaries(bundled.paths ?? {});
+    await fs.ensureDir(path.dirname(endpointsPath));
+    await fs.writeJson(endpointsPath, endpointSummaries, { spaces: 2 });
+    return endpointSummaries;
+}
 export async function dereferenceEndpointLater(endpointSchema, bundledComponents) {
     const operationId = typeof endpointSchema.operationId === "string" ? endpointSchema.operationId : "unknown-operation";
     const method = typeof endpointSchema.method === "string" ? endpointSchema.method.toUpperCase() : "GET";
@@ -245,7 +345,6 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
             const componentsPath = getComponentsPath(apiName);
             await fs.writeJson(componentsPath, api?.components ?? {}, { spaces: 2 });
         }
-        const endpoints = [];
         let totalEndpoints = 0;
         let processed = 0;
         const shouldShowProgress = options.progress !== false && isInteractive;
@@ -259,39 +358,10 @@ async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
                 }
             }
         }
-        for (const [pathKey, methods] of Object.entries(api.paths)) {
-            for (const [method, operation] of Object.entries(methods)) {
-                if (operation && typeof operation === "object" && "operationId" in operation) {
-                    const typedOperation = operation;
-                    if (typedOperation.operationId) {
-                        const endpointSummary = {
-                            operationId: typedOperation.operationId,
-                            sanitizedOperationId: sanitizeOperationPath(typedOperation.operationId),
-                            method,
-                            path: pathKey,
-                        };
-                        if (Array.isArray(typedOperation.tags)) {
-                            const tags = typedOperation.tags
-                                .map(tag => typeof tag === "string" ? tag.trim() : "")
-                                .filter((tag) => tag.length > 0);
-                            if (tags.length > 0) {
-                                endpointSummary.tags = tags;
-                            }
-                        }
-                        if (typedOperation.summary !== undefined) {
-                            endpointSummary.summary = typedOperation.summary;
-                        }
-                        if (typedOperation.description !== undefined) {
-                            endpointSummary.description = typedOperation.description;
-                        }
-                        endpoints.push(endpointSummary);
-                        processed += 1;
-                        if (shouldShowProgress) {
-                            logger.progress(`\rProcessed ${processed}/${totalEndpoints}`);
-                        }
-                    }
-                }
-            }
+        const endpoints = buildOpenApiEndpointSummaries(api.paths);
+        processed = endpoints.length;
+        if (shouldShowProgress && totalEndpoints > 0) {
+            logger.progress(`\rProcessed ${processed}/${totalEndpoints}`);
         }
         if (shouldShowProgress && totalEndpoints > 0) {
             logger.progressLine("");

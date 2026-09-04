@@ -19,6 +19,10 @@ export function getParameterDefaultValue(parameter) {
             : undefined;
     switch (type) {
         case "string":
+            if (typeof parameter?.in === "string" && parameter.in === "path") {
+                const name = typeof parameter?.name === "string" ? parameter.name.trim() : "";
+                return name || "value";
+            }
             return "";
         case "number":
         case "integer":

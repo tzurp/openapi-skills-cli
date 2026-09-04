@@ -3,6 +3,7 @@ export var ErrorCode;
     ErrorCode["UNKNOWN_API"] = "UNKNOWN_API";
     ErrorCode["MISSING_FILTER_ARGUMENT"] = "MISSING_FILTER_ARGUMENT";
     ErrorCode["INVALID_FILTER_SYNTAX"] = "INVALID_FILTER_SYNTAX";
+    ErrorCode["INVALID_COMPARE_ARGUMENT"] = "INVALID_COMPARE_ARGUMENT";
     ErrorCode["SCHEMA_TYPE_MISMATCH"] = "SCHEMA_TYPE_MISMATCH";
     ErrorCode["INVALID_VARIABLE_SYNTAX"] = "INVALID_VARIABLE_SYNTAX";
     ErrorCode["INVALID_JSON_ARGUMENT"] = "INVALID_JSON_ARGUMENT";
@@ -18,6 +19,12 @@ export var ErrorCode;
     ErrorCode["REQUEST_FAILED"] = "REQUEST_FAILED";
     ErrorCode["VALIDATION_FAILED"] = "VALIDATION_FAILED";
     ErrorCode["CONFIG_ERROR"] = "CONFIG_ERROR";
+    ErrorCode["MOCK_SERVER_STARTUP_FAILED"] = "MOCK_SERVER_STARTUP_FAILED";
+    ErrorCode["MOCK_SERVER_UNAVAILABLE"] = "MOCK_SERVER_UNAVAILABLE";
+    ErrorCode["MOCK_SERVER_MISMATCH"] = "MOCK_SERVER_MISMATCH";
+    ErrorCode["MOCK_ROUTE_NOT_FOUND"] = "MOCK_ROUTE_NOT_FOUND";
+    ErrorCode["MOCK_METHOD_NOT_ALLOWED"] = "MOCK_METHOD_NOT_ALLOWED";
+    ErrorCode["MOCK_ARTIFACT_INVALID"] = "MOCK_ARTIFACT_INVALID";
 })(ErrorCode || (ErrorCode = {}));
 export const RemediationTemplates = {
     [ErrorCode.UNKNOWN_API]: {
@@ -47,6 +54,10 @@ export const RemediationTemplates = {
     [ErrorCode.INVALID_FILTER_SYNTAX]: {
         reason: "--filter requires the target to be an array.",
         nextCommandHint: "Use --response-schema first to inspect the response shape, then use --get to narrow the value before filtering.",
+    },
+    [ErrorCode.INVALID_COMPARE_ARGUMENT]: {
+        reason: "The compare command requires two APIs and either --operations, --op, or two operation names.",
+        nextCommandHint: "Use 'openapi-skills compare --operations --api A --api B' or 'openapi-skills compare --api A opA --api B opB'.",
     },
     [ErrorCode.MISSING_FILTER_ARGUMENT]: {
         reason: "The list command requires at least one filter to avoid returning large, unbounded result sets.",
@@ -92,11 +103,36 @@ export const RemediationTemplates = {
         reason: "Failed to read or write configuration file.",
         nextCommandHint: "Check file permissions on .openapi-skills/config.json.",
     },
+    [ErrorCode.MOCK_SERVER_STARTUP_FAILED]: {
+        reason: "The mock server could not start because required artifacts are missing or invalid.",
+        nextCommandHint: "Regenerate the API artifacts and retry the mock-server command.",
+    },
+    [ErrorCode.MOCK_SERVER_UNAVAILABLE]: {
+        reason: "The configured mock server is not reachable or does not expose the expected health endpoint.",
+        nextCommandHint: "Start the matching mock server with 'openapi-skills mock-server --api <apiName>' and retry.",
+    },
+    [ErrorCode.MOCK_SERVER_MISMATCH]: {
+        reason: "The configured mock URL is pointing at a different API's mock server.",
+        nextCommandHint: "Update the API's mockUrl or start the correct mock server for this API.",
+    },
+    [ErrorCode.MOCK_ROUTE_NOT_FOUND]: {
+        reason: "The mock server could not find a matching route for the request.",
+        nextCommandHint: "Check the request path and method against endpoints.json.",
+    },
+    [ErrorCode.MOCK_METHOD_NOT_ALLOWED]: {
+        reason: "The request path exists but the HTTP method does not match any generated endpoint.",
+        nextCommandHint: "Use the generated method for the route or inspect endpoints.json.",
+    },
+    [ErrorCode.MOCK_ARTIFACT_INVALID]: {
+        reason: "A generated artifact used by the mock server is missing or malformed.",
+        nextCommandHint: "Regenerate the API artifacts and retry the command.",
+    },
 };
 export const ErrorCategories = {
     [ErrorCode.UNKNOWN_API]: "usage",
     [ErrorCode.MISSING_FILTER_ARGUMENT]: "usage",
     [ErrorCode.INVALID_FILTER_SYNTAX]: "usage",
+    [ErrorCode.INVALID_COMPARE_ARGUMENT]: "usage",
     [ErrorCode.SCHEMA_TYPE_MISMATCH]: "usage",
     [ErrorCode.INVALID_VARIABLE_SYNTAX]: "usage",
     [ErrorCode.INVALID_JSON_ARGUMENT]: "usage",
@@ -112,5 +148,11 @@ export const ErrorCategories = {
     [ErrorCode.REQUEST_FAILED]: "runtime",
     [ErrorCode.VALIDATION_FAILED]: "runtime",
     [ErrorCode.CONFIG_ERROR]: "runtime",
+    [ErrorCode.MOCK_SERVER_STARTUP_FAILED]: "runtime",
+    [ErrorCode.MOCK_SERVER_UNAVAILABLE]: "runtime",
+    [ErrorCode.MOCK_SERVER_MISMATCH]: "runtime",
+    [ErrorCode.MOCK_ROUTE_NOT_FOUND]: "state",
+    [ErrorCode.MOCK_METHOD_NOT_ALLOWED]: "state",
+    [ErrorCode.MOCK_ARTIFACT_INVALID]: "state",
 };
 //# sourceMappingURL=error-codes.js.map

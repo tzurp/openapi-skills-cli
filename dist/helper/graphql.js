@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
-import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
+import { buildSchema, Kind, parse, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
 import { sanitizeOperationPath } from "./sanitizer.js";
 const scalarNames = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 export const typescriptInstallCommand = "npm install typescript";
@@ -226,6 +226,9 @@ export function isGraphQL(text) {
         /\bbuilder\.(queryType|mutationType|subscriptionType)\s*\(/i,
         /\btoSchema\s*\(/i,
     ].some(pattern => pattern.test(text));
+}
+function isPlainObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function firstStringLiteralValue(node) {
     const ts = getTypeScriptModule();
@@ -963,5 +966,195 @@ export function selectionSetForDescriptor(descriptor) {
 }
 export function descriptorIsLeaf(descriptor) {
     return isLeafDescriptor(descriptor);
+}
+export function buildGraphQLResponseData(descriptor, seen = new Set()) {
+    if (descriptor.kind === "non-null" && descriptor.ofType) {
+        return buildGraphQLResponseData(descriptor.ofType, seen);
+    }
+    if (descriptor.kind === "list" && descriptor.ofType) {
+        return [buildGraphQLResponseData(descriptor.ofType, new Set(seen))];
+    }
+    if (descriptor.kind === "scalar" || descriptor.kind === "enum") {
+        return defaultValueForDescriptor(descriptor);
+    }
+    if (descriptor.kind === "object" || descriptor.kind === "input-object") {
+        const typeName = descriptor.typeName.trim();
+        if (typeName && seen.has(typeName)) {
+            return { __typename: typeName };
+        }
+        const nextSeen = new Set(seen);
+        if (typeName) {
+            nextSeen.add(typeName);
+        }
+        const out = {};
+        for (const [fieldName, fieldDescriptor] of Object.entries(descriptor.fields ?? {})) {
+            out[fieldName] = buildGraphQLResponseData(fieldDescriptor, nextSeen);
+        }
+        return out;
+    }
+    return null;
+}
+function unwrapGraphQLDescriptor(descriptor) {
+    if (descriptor.kind === "non-null" && descriptor.ofType) {
+        return unwrapGraphQLDescriptor(descriptor.ofType);
+    }
+    return descriptor;
+}
+function getGraphQLDescriptorTypeName(descriptor) {
+    const unwrapped = unwrapGraphQLDescriptor(descriptor);
+    return unwrapped.typeName;
+}
+function parseGraphQLSelection(requestBody, rootFieldName) {
+    if (!isPlainObject(requestBody)) {
+        return undefined;
+    }
+    const query = typeof requestBody.query === "string" ? requestBody.query.trim() : "";
+    if (!query) {
+        return undefined;
+    }
+    let document;
+    try {
+        document = parse(query);
+    }
+    catch {
+        return undefined;
+    }
+    const operationName = typeof requestBody.operationName === "string" ? requestBody.operationName.trim() : "";
+    const operations = document.definitions.filter((definition) => definition.kind === Kind.OPERATION_DEFINITION);
+    const operation = operationName
+        ? operations.find(entry => entry.name?.value === operationName) ?? operations[0]
+        : operations[0];
+    if (!operation) {
+        return undefined;
+    }
+    for (const selection of operation.selectionSet.selections) {
+        if (selection.kind !== Kind.FIELD) {
+            continue;
+        }
+        if (selection.name.value !== rootFieldName) {
+            continue;
+        }
+        return {
+            responseKey: selection.alias?.value ?? selection.name.value,
+            selectionSet: selection.selectionSet,
+        };
+    }
+    return undefined;
+}
+function validateGraphQLSelection(descriptor, selectionSet, typeName = getGraphQLDescriptorTypeName(descriptor), seen = new Set()) {
+    if (!selectionSet) {
+        return [];
+    }
+    const normalized = unwrapGraphQLDescriptor(descriptor);
+    if (normalized.kind === "list" && normalized.ofType) {
+        return validateGraphQLSelection(normalized.ofType, selectionSet, typeName, seen);
+    }
+    if (normalized.kind === "scalar" || normalized.kind === "enum") {
+        if (selectionSet.selections.length > 0) {
+            return [`Field "${typeName}" does not have subfields.`];
+        }
+        return [];
+    }
+    if (normalized.kind !== "object" && normalized.kind !== "input-object") {
+        return [];
+    }
+    if (seen.has(typeName)) {
+        return [];
+    }
+    const nextSeen = new Set(seen);
+    nextSeen.add(typeName);
+    const errors = [];
+    for (const selection of selectionSet.selections) {
+        if (selection.kind !== Kind.FIELD) {
+            errors.push("Fragments are not supported by the mock GraphQL server.");
+            continue;
+        }
+        if (selection.name.value === "__typename") {
+            continue;
+        }
+        const childDescriptor = normalized.fields?.[selection.name.value];
+        if (!childDescriptor) {
+            errors.push(`Cannot query field "${selection.name.value}" on type "${typeName}".`);
+            continue;
+        }
+        if (!selection.selectionSet) {
+            continue;
+        }
+        const childType = unwrapGraphQLDescriptor(childDescriptor);
+        if (childType.kind === "scalar" || childType.kind === "enum") {
+            errors.push(`Field "${selection.name.value}" of type "${getGraphQLDescriptorTypeName(childDescriptor)}" must not have a selection set.`);
+            continue;
+        }
+        errors.push(...validateGraphQLSelection(childDescriptor, selection.selectionSet, getGraphQLDescriptorTypeName(childDescriptor), nextSeen));
+    }
+    return errors;
+}
+function pruneGraphQLResponseData(descriptor, value, selectionSet, seen = new Set()) {
+    if (descriptor.kind === "non-null" && descriptor.ofType) {
+        return pruneGraphQLResponseData(descriptor.ofType, value, selectionSet, seen);
+    }
+    if (descriptor.kind === "list" && descriptor.ofType) {
+        if (!Array.isArray(value)) {
+            return value;
+        }
+        return value.map(item => pruneGraphQLResponseData(descriptor.ofType, item, selectionSet, new Set(seen)));
+    }
+    if (descriptor.kind === "scalar" || descriptor.kind === "enum") {
+        return value;
+    }
+    if ((descriptor.kind === "object" || descriptor.kind === "input-object") && isPlainObject(value)) {
+        if (!selectionSet) {
+            return value;
+        }
+        const typeName = descriptor.typeName.trim();
+        if (typeName && seen.has(typeName)) {
+            return selectionSet.selections.some(selection => selection.kind === Kind.FIELD && selection.name.value === "__typename")
+                ? { __typename: typeName }
+                : {};
+        }
+        const nextSeen = new Set(seen);
+        if (typeName) {
+            nextSeen.add(typeName);
+        }
+        const out = {};
+        for (const selection of selectionSet.selections) {
+            if (selection.kind !== Kind.FIELD) {
+                continue;
+            }
+            const responseKey = selection.alias?.value ?? selection.name.value;
+            if (selection.name.value === "__typename") {
+                out[responseKey] = descriptor.typeName;
+                continue;
+            }
+            const childDescriptor = descriptor.fields?.[selection.name.value];
+            if (!childDescriptor) {
+                continue;
+            }
+            const childValue = value[selection.name.value];
+            out[responseKey] = pruneGraphQLResponseData(childDescriptor, childValue, selection.selectionSet, nextSeen);
+        }
+        return out;
+    }
+    return value;
+}
+export function buildGraphQLResponseDataForSelection(descriptor, requestBody, rootFieldName) {
+    const selection = parseGraphQLSelection(requestBody, rootFieldName);
+    const responseKey = selection?.responseKey ?? rootFieldName;
+    const fullData = buildGraphQLResponseData(descriptor);
+    if (!selection?.selectionSet) {
+        return { responseKey, data: fullData };
+    }
+    const validationErrors = validateGraphQLSelection(descriptor, selection.selectionSet);
+    if (validationErrors.length > 0) {
+        return {
+            responseKey,
+            data: null,
+            errors: validationErrors.map(message => ({ message })),
+        };
+    }
+    return {
+        responseKey,
+        data: pruneGraphQLResponseData(descriptor, fullData, selection.selectionSet),
+    };
 }
 //# sourceMappingURL=graphql.js.map

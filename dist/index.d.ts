@@ -1,9 +1,10 @@
-type ConfigField = "version" | "baseUrl" | "authHeaders" | "vars";
+type ConfigField = "version" | "baseUrl" | "mockUrl" | "authHeaders" | "vars";
 type UpdateConfigOptions = {
     version?: string;
     openapiSource?: string;
     schemaType?: "openapi" | "graphql";
     baseUrl?: string;
+    mockUrl?: string;
     auth?: Record<string, string>;
     vars?: Record<string, string>;
     removeApi?: boolean;
@@ -26,6 +27,7 @@ export interface ApiConfig {
     openapiSource?: string;
     schemaType?: "openapi" | "graphql";
     baseUrl?: string;
+    mockUrl?: string;
     auth?: {
         headers?: Record<string, string>;
     };

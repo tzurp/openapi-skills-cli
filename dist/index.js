@@ -24,7 +24,7 @@ export async function updateConfig(apiName, options = {}) {
     if (typeof apiName !== "string" || apiName.trim().length === 0) {
         throw new Error("API name is required.");
     }
-    const { baseUrl, auth, vars, version, openapiSource, schemaType, removeApi } = options;
+    const { baseUrl, mockUrl, auth, vars, version, openapiSource, schemaType, removeApi } = options;
     const updates = {};
     if (removeApi) {
         if (!(await fs.pathExists(configPath))) {
@@ -65,6 +65,9 @@ export async function updateConfig(apiName, options = {}) {
     }
     if (baseUrl !== undefined) {
         updates[`apis.${apiName}.baseUrl`] = baseUrl;
+    }
+    if (mockUrl !== undefined) {
+        updates[`apis.${apiName}.mockUrl`] = mockUrl;
     }
     if (schemaType !== undefined) {
         updates[`apis.${apiName}.schemaType`] = schemaType;
@@ -125,6 +128,8 @@ export async function getConfigValue(apiName, key) {
             return api.version ?? "unknown";
         case "baseUrl":
             return api.baseUrl;
+        case "mockUrl":
+            return api.mockUrl;
         case "authHeaders":
             return api.auth?.headers ?? {};
         case "vars":

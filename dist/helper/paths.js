@@ -11,6 +11,18 @@ export function getBundledPath(apiName) {
 export function getComponentsPath(apiName) {
     return path.resolve(projectRoot, ".openapi-skills", apiName, "components.json");
 }
+export function getDocsOutputDir(apiName) {
+    return path.resolve(projectRoot, ".openapi-skills", apiName, "out");
+}
+export function getDocsAssetsDir() {
+    return path.resolve(projectRoot, ".openapi-skills", "_assets");
+}
+export function getRedocStandalonePath() {
+    return path.join(getDocsAssetsDir(), "redoc.standalone.js");
+}
+export function getDocsSchemaPath(apiName, extension) {
+    return path.resolve(projectRoot, ".openapi-skills", apiName, `schema.${extension}`);
+}
 export function findRequestResponseDir(apiName, sanitizedOperationId) {
     const schemasDir = getSchemasDir(apiName);
     return path.resolve(schemasDir, sanitizedOperationId);

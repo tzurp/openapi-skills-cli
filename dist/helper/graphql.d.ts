@@ -38,3 +38,11 @@ export declare function defaultValueForDescriptor(descriptor: GraphQLTypeDescrip
 export declare function typeStringForDescriptor(descriptor: GraphQLTypeDescriptor): string;
 export declare function selectionSetForDescriptor(descriptor: GraphQLTypeDescriptor): string;
 export declare function descriptorIsLeaf(descriptor: GraphQLTypeDescriptor): boolean;
+export declare function buildGraphQLResponseData(descriptor: GraphQLTypeDescriptor, seen?: Set<string>): unknown;
+export declare function buildGraphQLResponseDataForSelection(descriptor: GraphQLTypeDescriptor, requestBody: unknown, rootFieldName: string): {
+    responseKey: string;
+    data: unknown;
+    errors?: Array<{
+        message: string;
+    }>;
+};

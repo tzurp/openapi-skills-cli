@@ -52,13 +52,6 @@ export class FetchClient {
                 responseBody = text;
             }
         }
-        if (responseBody !== null && typeof responseBody === "object" && !Array.isArray(responseBody)) {
-            return {
-                ...responseBody,
-                status: response.status,
-                statusText: response.statusText,
-            };
-        }
         return {
             body: responseBody,
             status: response.status,

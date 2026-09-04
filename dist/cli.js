@@ -6,11 +6,12 @@ import os from "os";
 import { getOpenapiToSkillsDir, getProjectRoot, getEndpointsPath, getOperationArtifactPath } from "./helper/paths.js";
 import { ensureConfig, updateConfig, listApis, getConfigValue, deleteApi, loadConfig } from "./index.js";
 import { buildClientCodeSchema } from "./client-schema-builder.js";
-import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings, getSchemaType } from "./validate-response.js";
+import { validateResponse, makeRequest, ensureResponseSchema, prepareRequestTemplate, collectRequestUpdateTypeWarnings, getSchemaType, isStructuredRequestError } from "./validate-response.js";
+import { startMockServer } from "./helper/mock-server.js";
 import { createRequire } from "module";
 import { promptInstallLocation, installSkillBundle } from "./install-skill.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
-import { logger, toErrorMessage } from "./helper/logger.js";
+import { logger } from "./helper/logger.js";
 import { filterEndpoints, filterResolvedEndpoints, sliceEndpointsByIndex } from "./helper/endpoint-filter.js";
 import { getSanitizedOperationId } from "./helper/endpoint-utils.js";
 import { checkForUpdateOncePerTerminalSession } from "./helper/update-check.js";
@@ -23,7 +24,10 @@ import { parseGetOperationFilter } from "./helper/get-operation-filter.js";
 import { decodeBase64UrlJsonObject } from "./helper/base64url-json.js";
 import { buildError, buildSuccess } from "./helper/error-formatter.js";
 import { ErrorCode } from "./helper/error-codes.js";
+import { compareOperationLists, compareSchemas, getCompareBreakingChanges, renderCompareOperations, renderCompareSchemas, resolveComparePlan } from "./helper/compare.js";
+import { isInteractive, toErrorMessage } from "./helper/logger.js";
 import { isTypeScriptUnavailableError, typescriptInstallCommand } from "./helper/graphql.js";
+import { generateDocsSite, openDocsInBrowser, serveDocs } from "./helper/docs.js";
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
 const url = pkg.repository.url;
@@ -47,6 +51,18 @@ async function guardApiName(apiName) {
     }));
     process.exitCode = 1;
     return false;
+}
+function buildExecutionFailure(error, fallback) {
+    if (isStructuredRequestError(error)) {
+        return buildError(error.code, {
+            summary: error.summary ?? fallback.summary,
+            message: error.message,
+            context: error.context ?? fallback.context,
+            nextCommand: error.nextCommand ?? fallback.nextCommand,
+            reason: error.reason,
+        });
+    }
+    return buildError(fallback.code, fallback);
 }
 const banner = `
   \u001b[32m
@@ -238,6 +254,171 @@ generateCmd.agentMeta = {
         requiresParsedApi: false
     },
     filesWritten: ["endpoints.json", "schemas/", "config.json"]
+};
+const docsCmd = program
+    .command("docs <schemaPath>")
+    .option("--out <path>", "Output directory for generated documentation.")
+    .option("--rename <schemaName>", "Override the schema name used for the default output directory.")
+    .option("--port <port>", "Port for the local docs server.", "8000")
+    .option("--open", "Open the generated docs in the default browser after starting the local server.")
+    .option("--no-serve", "Generate docs without starting the local HTTP server.")
+    .option("--dark", "Render the docs in dark mode.")
+    .option("--hide-sidebar", "Hide the sidebar.")
+    .option("--hide-download-buttons", "Hide download buttons.")
+    .option("--disable-search", "Disable the search box.")
+    .option("--only-required-in-samples", "Show only required fields in generated samples.")
+    .option("--sort-required-props-first", "Sort required properties first.")
+    .option("--show-extensions", "Show extension properties.")
+    .option("--scroll-y-offset <offset>", "Scroll Y offset for anchored navigation.")
+    .description("Generate HTML documentation for an OpenAPI schema using Redocly CE and a local HTTP server.")
+    .addHelpText("after", [
+    "Generates a static Redoc page from a local OpenAPI schema file or HTTP(S) URL.",
+    "The schema path may be absolute, relative to the project root, or a URL.",
+    "If --out is omitted, the default output directory is .openapi-skills/<schemaName>/out.",
+    "schemaName defaults to the schema file name without extension, or --rename when provided.",
+    "By default the CLI starts a local HTTP server so Redoc CE does not run from file:// URLs.",
+    "",
+    "Example:",
+    "  openapi-skills docs main-schema/openapi.json",
+    "  openapi-skills docs main-schema/openapi.json --out docs/",
+    "  openapi-skills docs /abs/path/to/schema.yaml --rename petstore",
+    "  openapi-skills docs main-schema/openapi.json --no-serve",
+    "  openapi-skills docs main-schema/openapi.json --port 9000",
+    "  openapi-skills docs main-schema/openapi.json --open",
+    "  openapi-skills docs main-schema/openapi.json --dark",
+    "  openapi-skills docs main-schema/openapi.json --disable-search",
+    "  openapi-skills docs https://example.com/openapi.json --out docs/"
+].join("\n"))
+    .action(async (schemaPath, options) => {
+    try {
+        const parsedScrollYOffset = typeof options.scrollYOffset === "string" && options.scrollYOffset.trim().length > 0
+            ? Number(options.scrollYOffset)
+            : undefined;
+        if (typeof parsedScrollYOffset === "number" && (!Number.isFinite(parsedScrollYOffset) || parsedScrollYOffset < 0)) {
+            logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+                summary: "Invalid --scroll-y-offset value.",
+                message: `Offset '${options.scrollYOffset}' is not a valid non-negative number.`,
+                context: { schema_path: schemaPath, scroll_y_offset: options.scrollYOffset ?? null },
+                nextCommand: `openapi-skills docs ${schemaPath} --scroll-y-offset 0`,
+            }));
+            process.exitCode = 1;
+            return;
+        }
+        const result = await generateDocsSite({
+            schemaSourcePath: schemaPath,
+            rename: typeof options.rename === "string" && options.rename.trim().length > 0 ? options.rename.trim() : undefined,
+            outDir: typeof options.out === "string" && options.out.trim().length > 0 ? options.out.trim() : undefined,
+            dark: options.dark === true,
+            hideSidebar: options.hideSidebar === true,
+            hideDownloadButtons: options.hideDownloadButtons === true,
+            disableSearch: options.disableSearch === true,
+            onlyRequiredInSamples: options.onlyRequiredInSamples === true,
+            sortRequiredPropsFirst: options.sortRequiredPropsFirst === true,
+            showExtensions: options.showExtensions === true,
+            scrollYOffset: parsedScrollYOffset,
+        });
+        const shouldServe = options.serve !== false;
+        const parsedPort = Number(options.port ?? 8000);
+        if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
+            logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+                summary: "Invalid --port value.",
+                message: `Port '${options.port}' is not a valid TCP port.`,
+                context: { schema_path: schemaPath, port: options.port ?? null },
+                nextCommand: `openapi-skills docs ${schemaPath} --port 8000`,
+            }));
+            process.exitCode = 1;
+            return;
+        }
+        logger.result(buildSuccess({
+            schemaName: result.schemaName,
+            outDir: result.outDir,
+            indexPath: result.indexPath,
+            schemaFileName: result.schemaFileName,
+        }, { kind: "docs-result" }));
+        if (!shouldServe) {
+            const useColor = Boolean(process.stderr.isTTY);
+            const cyanStart = useColor ? "\x1b[36m" : "";
+            const cyanEnd = useColor ? "\x1b[0m" : "";
+            logger.info(`Documentation generated at:`);
+            logger.info(`${cyanStart}${result.indexPath}${cyanEnd}`);
+            process.exitCode = 0;
+            return;
+        }
+        const { url } = await serveDocs(result.outDir, parsedPort);
+        if (options.open === true) {
+            await openDocsInBrowser(url);
+        }
+        logger.info(`Documentation generated and available at:`);
+        const useColor = Boolean(process.stderr.isTTY);
+        const cyanStart = useColor ? "\x1b[36m" : "";
+        const cyanEnd = useColor ? "\x1b[0m" : "";
+        const yellowStart = useColor ? "\x1b[33m" : "";
+        const yellowEnd = useColor ? "\x1b[0m" : "";
+        logger.info(`${cyanStart}${url}${cyanEnd}`);
+        logger.info(`${yellowStart}Click Ctrl+C to stop the server${yellowEnd}`);
+        process.exitCode = 0;
+    }
+    catch (error) {
+        const message = toErrorMessage(error);
+        const isMissingSchema = /Schema file not found|Unsupported schema file extension/i.test(message);
+        const isFetchFailure = /Failed to download schema from|fetch/i.test(message);
+        logger.result(buildError(isMissingSchema ? ErrorCode.API_PARSE_ERROR : isFetchFailure ? ErrorCode.REQUEST_FAILED : ErrorCode.CONFIG_ERROR, {
+            summary: isMissingSchema ? "Documentation schema file not found." : isFetchFailure ? "Failed to fetch schema source." : "Failed to generate documentation.",
+            message,
+            context: { schema_path: schemaPath, out_dir: typeof options.out === "string" ? options.out : null, rename: typeof options.rename === "string" ? options.rename : null },
+            nextCommand: isMissingSchema ? "openapi-skills docs <schemaPath>" : `openapi-skills docs ${schemaPath}`,
+        }));
+        process.exitCode = 1;
+    }
+});
+docsCmd.agentMeta = {
+    name: "docs",
+    category: "Documentation",
+    usage: "openapi-skills docs <schemaPath> [--out <path>] [--rename <schemaName>] [--port <port>] [--open] [--no-serve] [--dark] [--disable-search]",
+    description: "Generate HTML documentation for an OpenAPI schema file or URL using Redocly CE and a local HTTP server. The command copies or downloads the schema into the output directory and references the Redoc CDN bundle directly.",
+    arguments: [
+        { name: "schemaPath", type: "path|url", required: true, positional: true, description: "OpenAPI schema file path or HTTP(S) URL. Absolute or relative to the project root, or a URL." },
+        { name: "out", type: "path", required: false, flag: true, description: "Output directory for generated documentation." },
+        { name: "rename", type: "string", required: false, flag: true, description: "Override the schema name used for the default output directory." },
+        { name: "port", type: "number", required: false, flag: true, description: "Port for the local docs server." },
+        { name: "open", type: "flag", required: false, flag: true, description: "Open the generated docs in the default browser after starting the server." },
+        { name: "no-serve", type: "flag", required: false, flag: true, description: "Generate docs without starting the local HTTP server." },
+        { name: "dark", type: "flag", required: false, flag: true, description: "Render the docs in dark mode." },
+        { name: "hide-sidebar", type: "flag", required: false, flag: true, description: "Hide the sidebar." },
+        { name: "hide-download-buttons", type: "flag", required: false, flag: true, description: "Hide download buttons." },
+        { name: "disable-search", type: "flag", required: false, flag: true, description: "Disable the search box." },
+        { name: "only-required-in-samples", type: "flag", required: false, flag: true, description: "Show only required fields in generated samples." },
+        { name: "sort-required-props-first", type: "flag", required: false, flag: true, description: "Sort required properties first." },
+        { name: "show-extensions", type: "flag", required: false, flag: true, description: "Show extension properties." },
+        { name: "scroll-y-offset", type: "number", required: false, flag: true, description: "Scroll Y offset for anchored navigation." },
+    ],
+    examples: [
+        "openapi-skills docs main-schema/openapi.json",
+        "openapi-skills docs main-schema/openapi.json --out docs/",
+        "openapi-skills docs /abs/path/to/schema.yaml --rename petstore",
+        "openapi-skills docs main-schema/openapi.json --no-serve",
+        "openapi-skills docs main-schema/openapi.json --port 9000",
+        "openapi-skills docs main-schema/openapi.json --open",
+        "openapi-skills docs main-schema/openapi.json --dark",
+        "openapi-skills docs main-schema/openapi.json --hide-sidebar",
+        "openapi-skills docs main-schema/openapi.json --disable-search",
+        "openapi-skills docs https://example.com/openapi.json --out docs/"
+    ],
+    returns: {
+        type: "json",
+        description: "Returns a success payload with the generated index.html path."
+    },
+    sideEffects: {
+        writesFiles: true,
+        readsFiles: true,
+        network: true
+    },
+    constraints: {
+        destructive: false,
+        idempotent: false,
+        requiresParsedApi: false
+    },
+    filesWritten: ["out/index.html", "out/schema.yaml|schema.json"]
 };
 const listCmd = program
     .command("list")
@@ -593,6 +774,133 @@ describeCmd.agentMeta = {
     },
     filesWritten: []
 };
+const compareCmd = program
+    .command("compare [operationNames...]")
+    .option("--api <apiName>", "Comparison API name. Repeat this flag exactly twice.", (value, previous) => {
+    const values = Array.isArray(previous) ? previous : previous ? [previous] : [];
+    return [...values, value];
+})
+    .option("--op <operationName>", "Compare the same operation name across both APIs.")
+    .option("--operations", "Compare only the high-level operation list from endpoints.json.")
+    .option("--json", "Suppress the human-readable stderr summary and return JSON only.")
+    .description("Compare two parsed APIs or operations. Supports high-level surface diffs with --operations and schema diffs with --op or two operation names.")
+    .action(async (operationNames, options) => {
+    try {
+        const { plan, error } = await resolveComparePlan(options.api, operationNames, {
+            op: options.op,
+            operations: options.operations === true,
+        });
+        if (error || !plan) {
+            logger.result(buildError(ErrorCode.INVALID_COMPARE_ARGUMENT, {
+                summary: "Invalid compare arguments.",
+                message: error?.message ?? "Invalid compare arguments.",
+                context: {
+                    api_names: Array.isArray(options.api) ? options.api : options.api ? [options.api] : [],
+                    operation_names: operationNames,
+                    op: options.op ?? null,
+                    operations: options.operations === true,
+                },
+                nextCommand: "openapi-skills compare --operations --api apiA --api apiB",
+            }));
+            process.exitCode = 2;
+            return;
+        }
+        if (!(await guardApiName(plan.apiA)) || !(await guardApiName(plan.apiB))) {
+            return;
+        }
+        if (plan.mode === "operations") {
+            const result = await compareOperationLists(plan.apiA, plan.apiB);
+            const breakingChanges = getCompareBreakingChanges(result);
+            const showHumanSummary = isInteractive && options.json !== true;
+            logger.result(buildSuccess({
+                apiA: plan.apiA,
+                apiB: plan.apiB,
+                summary: {
+                    added: result.added.length,
+                    removed: result.removed.length,
+                    modified: result.modified.length,
+                    breaking: breakingChanges.length,
+                },
+                added: result.added,
+                removed: result.removed,
+                modified: result.modified,
+                breakingChanges,
+            }, { kind: "compare-operations-result" }));
+            if (showHumanSummary) {
+                logger.info(renderCompareOperations(result, true).join("\n"));
+            }
+            process.exitCode = 0;
+            return;
+        }
+        const result = await compareSchemas(plan.apiA, plan.operationA, plan.apiB, plan.operationB);
+        const breakingChanges = getCompareBreakingChanges(result);
+        const showHumanSummary = isInteractive && options.json !== true;
+        logger.result(buildSuccess({
+            apiA: plan.apiA,
+            apiB: plan.apiB,
+            operationA: plan.operationA,
+            operationB: plan.operationB,
+            differenceCount: result.differences.length,
+            differences: result.differences,
+            breakingChanges,
+        }, { kind: "compare-schemas-result" }));
+        if (showHumanSummary) {
+            logger.info(renderCompareSchemas(result, true).join("\n"));
+        }
+        process.exitCode = 0;
+    }
+    catch (error) {
+        logger.result(buildError(ErrorCode.API_PARSE_ERROR, {
+            summary: "Error comparing APIs.",
+            message: toErrorMessage(error),
+            context: {
+                api_names: Array.isArray(options.api) ? options.api : options.api ? [options.api] : [],
+                operation_names: operationNames,
+            },
+        }));
+        process.exitCode = 1;
+    }
+});
+compareCmd.agentMeta = {
+    name: "compare",
+    category: "Comparison",
+    usage: "openapi-skills compare --api <apiName> [operationName] --api <apiName> [operationName] [--op <operationName>] [--operations]",
+    description: [
+        "Compare two APIs or two operations using generated artifacts only.",
+        "The command automatically extracts missing endpoints.json and operation schema artifacts before diffing.",
+        "Use --operations for a high-level surface diff, --op to compare the same operation across both APIs, or two operation names to compare different operations.",
+        "Use --json to suppress the human-readable stderr summary."
+    ].join("\n"),
+    arguments: [
+        { name: "api", type: "string", required: true, flag: true, description: "The first and second API names. Repeat the flag exactly twice." },
+        { name: "operationName", type: "string", required: false, positional: true, description: "Optional operation name after each --api flag." },
+        { name: "op", type: "string", required: false, flag: true, description: "Compare the same operation name across both APIs." },
+        { name: "operations", type: "flag", required: false, flag: true, description: "Compare only endpoints.json operation lists." },
+        { name: "json", type: "flag", required: false, flag: true, description: "Suppress the human-readable stderr summary and return JSON only." },
+    ],
+    examples: [
+        "openapi-skills compare --operations --api v1 --api v2",
+        "openapi-skills compare --api v1 --api v2 --op addPet",
+        "openapi-skills compare --api v1 addPet --api v2 addPetV2",
+        "openapi-skills compare --api v1 addPet --api v1 addPetV2",
+        "openapi-skills compare --operations --json --api v1 --api v2"
+    ],
+    returns: {
+        type: "json",
+        description: "Returns either a surface diff result or a recursive schema diff result depending on the selected mode."
+    },
+    sideEffects: {
+        writesFiles: true,
+        readsFiles: true,
+        network: false
+    },
+    constraints: {
+        destructive: false,
+        idempotent: true,
+        requiresParsedApi: true
+    },
+    filesWritten: ["endpoints.json", "schemas/"]
+};
 const getOperationCmd = program
     .command("get-operation <operationId>")
     .alias("get-operation-artifact")
@@ -852,9 +1160,10 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --update-request-encoded (patch request artifact using base64url-encoded JSON), --header (add headers), --header-encoded (add headers using base64url-encoded JSON).")
+    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --mock (use the local mock server URL instead of baseUrl), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --update-request-encoded (patch request artifact using base64url-encoded JSON), --header (add headers), --header-encoded (add headers using base64url-encoded JSON).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists.")
+    .option("--mock", "Send the request to the configured mockUrl for this API instead of baseUrl.")
     .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
     .option("--update-request <json>", [
     "Update request artifact before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
@@ -1140,9 +1449,10 @@ const requestCmd = program
             return;
         }
     }
+    const useMockUrl = options.mock === true;
     if (options.validate) {
         try {
-            const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+            const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings, useMockUrl);
             const metadata = getRequestResponseMetadata(apiName, operationId);
             if (!result.valid) {
                 logger.result(buildError(ErrorCode.VALIDATION_FAILED, {
@@ -1172,7 +1482,8 @@ const requestCmd = program
             process.exitCode = 0;
         }
         catch (error) {
-            logger.result(buildError(ErrorCode.VALIDATION_FAILED, {
+            logger.result(buildExecutionFailure(error, {
+                code: ErrorCode.VALIDATION_FAILED,
                 summary: "Validation failed.",
                 message: toErrorMessage(error),
                 context: { api_name: apiName, operation_id: operationId },
@@ -1184,7 +1495,7 @@ const requestCmd = program
     }
     else {
         try {
-            const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+            const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings, useMockUrl);
             await ensureResponseSchema(apiName, operationId);
             const metadata = getRequestResponseMetadata(apiName, operationId);
             logger.result(buildSuccess({
@@ -1197,7 +1508,8 @@ const requestCmd = program
             process.exitCode = 0;
         }
         catch (error) {
-            logger.result(buildError(ErrorCode.REQUEST_FAILED, {
+            logger.result(buildExecutionFailure(error, {
+                code: ErrorCode.REQUEST_FAILED,
                 summary: "Request failed.",
                 message: toErrorMessage(error),
                 context: { api_name: apiName, operation_id: operationId },
@@ -1211,7 +1523,7 @@ const requestCmd = program
 requestCmd.agentMeta = {
     name: "request",
     category: "Validation",
-    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--update-request-encoded <base64url>] [--header <json>] [--header-encoded <base64url>]",
+    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--mock] [--force] [--update-request <json>] [--update-request-encoded <base64url>] [--header <json>] [--header-encoded <base64url>]",
     description: [
         "Make a live HTTP request for an operation, or prepare a multi-step request scenario without executing requests.",
         "When multiple operationIds are supplied, the command enters prepare-only mode and refreshes request artifact templates for the scenario.",
@@ -1223,6 +1535,7 @@ requestCmd.agentMeta = {
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists." },
+        { name: "mock", type: "flag", required: false, flag: true, description: "Send the request to the local mock server URL stored in config.json instead of the live baseUrl." },
         { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
         { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Binary fields can be set to a file path string or file descriptor object. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
         { name: "update-request-encoded", type: "string", required: false, flag: true, description: "Patch request artifact before making the request using base64url-encoded JSON. Use this when quoting is unreliable." },
@@ -1232,6 +1545,7 @@ requestCmd.agentMeta = {
     examples: [
         "openapi-skills request getPetById --api petstore",
         "openapi-skills request getPetById --api petstore --validate",
+        "openapi-skills request getPetById --api petstore --mock",
         "openapi-skills request getPetById --api petstore --force --update-request '{\"user.profile.name\":\"Ada\"}'",
         "openapi-skills request getPetById --api petstore --force --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9",
         "openapi-skills request getPetById --api petstore --update-request '{\"user.profile.name\":\"Ada\"}'",
@@ -1255,6 +1569,79 @@ requestCmd.agentMeta = {
         requiresParsedApi: true
     },
     filesWritten: ["request artifact", "response artifact", "response-schema artifact (when response has JSON body)"]
+};
+const mockServerCmd = program
+    .command("mock-server")
+    .requiredOption("--api <apiName>", "API name to serve")
+    .option("--port <port>", "Port to bind the mock server on.", "3000")
+    .option("--host <host>", "Host to bind the mock server on.", "127.0.0.1")
+    .description("Start a local mock HTTP server that serves saved responses and deterministic fallbacks from generated artifacts.")
+    .action(async (options) => {
+    const apiName = options.api;
+    if (!(await guardApiName(apiName))) {
+        return;
+    }
+    const host = typeof options.host === "string" && options.host.trim().length > 0 ? options.host.trim() : "127.0.0.1";
+    const parsedPort = Number(options.port ?? 3000);
+    if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
+        logger.result(buildError(ErrorCode.CONFIG_ERROR, {
+            summary: "Invalid --port value.",
+            message: `Port '${options.port}' is not a valid TCP port.`,
+            context: { api_name: apiName, port: options.port ?? null, host },
+            nextCommand: `openapi-skills mock-server --api ${apiName} --port 3000`,
+        }));
+        process.exitCode = 1;
+        return;
+    }
+    try {
+        const { mockUrl } = await startMockServer(apiName, host, parsedPort);
+        const useColor = Boolean(process.stderr.isTTY);
+        const cyanStart = useColor ? "\x1b[36m" : "";
+        const cyanEnd = useColor ? "\x1b[0m" : "";
+        logger.info(`${cyanStart}Server is started at: ${mockUrl} for API '${apiName}'.${cyanEnd}`);
+        logger.info(`${cyanStart}Press Ctrl+C to exit.${cyanEnd}`);
+        process.exitCode = 0;
+    }
+    catch (error) {
+        logger.result(buildError(ErrorCode.MOCK_SERVER_STARTUP_FAILED, {
+            summary: "Failed to start the mock server.",
+            message: toErrorMessage(error),
+            context: { api_name: apiName, port: parsedPort, host },
+            nextCommand: `openapi-skills generate <openapi-source>`,
+        }));
+        process.exitCode = 1;
+    }
+});
+mockServerCmd.agentMeta = {
+    name: "mock-server",
+    category: "Serving",
+    usage: "openapi-skills mock-server --api <apiName> [--port <port>] [--host <host>]",
+    description: "Start a local mock HTTP server for a generated API. The server replays response.json when present, falls back to deterministic responses when needed, and persists the running URL in config.json.",
+    arguments: [
+        { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
+        { name: "port", type: "number", required: false, flag: true, description: "Port to bind the mock server on." },
+        { name: "host", type: "string", required: false, flag: true, description: "Host interface to bind the mock server on." },
+    ],
+    examples: [
+        "openapi-skills mock-server --api petstore",
+        "openapi-skills mock-server --api petstore --port 3000",
+        "openapi-skills mock-server --api petstore --host 127.0.0.1"
+    ],
+    returns: {
+        type: "json",
+        description: "Returns a structured start message containing the running mockUrl."
+    },
+    sideEffects: {
+        writesFiles: true,
+        readsFiles: true,
+        network: false
+    },
+    constraints: {
+        destructive: false,
+        idempotent: false,
+        requiresParsedApi: true
+    },
+    filesWritten: ["config.json"]
 };
 const setEnvCmd = program
     .command("set-env")

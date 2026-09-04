@@ -1,4 +1,5 @@
 import { type Updates } from "./helper/json-updater.js";
+import { ErrorCode } from "./helper/error-codes.js";
 type RequestJson = {
     parameters?: Array<{
         name: string;
@@ -27,12 +28,20 @@ type MakeRequestResult = {
     response: any;
     warnings?: string[];
 };
+export type StructuredRequestError = Error & {
+    code: ErrorCode;
+    summary?: string;
+    context?: Record<string, unknown>;
+    nextCommand?: string;
+    reason?: string;
+};
+export declare function isStructuredRequestError(error: unknown): error is StructuredRequestError;
 export declare function buildRequestBodyTransport(operationSchema: any, requestJsonOrBody: unknown): Promise<RequestBodyTransport>;
 export declare function getSchemaType(apiName: string): Promise<"openapi" | "graphql">;
 export declare function collectRequestUpdateTypeWarnings(requestJson: RequestJson, requestJsonUpdates: Updates): string[];
 export declare function ensureResponseSchema(apiName: string, operationId: string): Promise<any>;
-export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[]): Promise<MakeRequestResult>;
-export declare function validateResponse(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[]): Promise<{
+export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[], useMockUrl?: boolean): Promise<MakeRequestResult>;
+export declare function validateResponse(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[], useMockUrl?: boolean): Promise<{
     valid: boolean;
     errors?: string[];
     warnings?: string[];
@@ -44,4 +53,6 @@ export declare function prepareRequestTemplate(apiName: string, sanitizedOperati
 }>;
 export declare function getDeterministicRequestBody(operation: any): any;
 export declare function getDeterministicResponseBody(operation: any): any;
+export declare function buildDeterministicResponseValue(operation: any): any;
+export declare function buildDeterministicValueFromSchema(schema: any): any;
 export {};

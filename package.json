@@ -1,6 +1,6 @@
 {
   "name": "openapi-skills",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "CLI toolkit for exploring OpenAPI and GraphQL schemas, generating operation artifacts, validators, and tests. Includes an agent skill bundle that teaches AI tools how to operate the CLI safely and efficiently.",
   "bin": {
     "openapi-skills": "bin/openapi-skills"

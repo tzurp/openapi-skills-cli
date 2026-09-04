@@ -7,12 +7,107 @@ import { buildClientCodeSchema } from "./client-schema-builder.js";
 import { DELETE_SENTINEL, loadJsonObject, updateJsonFile } from "./helper/json-updater.js";
 import { loadConfig } from "./index.js";
 import getSanitizedOperationId from "./helper/endpoint-utils.js";
+import { ErrorCode } from "./helper/error-codes.js";
 import { getParameterDefaultValue } from "./helper/parameter-schema.js";
 import { getByPath } from "./helper/dotNotation.js";
 import { buildGraphQLArtifact, findGraphQLEndpoint } from "./helper/graphql.js";
 import { getEndpointsPath } from "./helper/paths.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
 import { fileURLToPath } from "url";
+function unwrapResponseBody(responseJson) {
+    if (responseJson && typeof responseJson === "object" && !Array.isArray(responseJson)) {
+        const maybeEnvelope = responseJson;
+        if (Object.prototype.hasOwnProperty.call(responseJson, "body")) {
+            return maybeEnvelope.body;
+        }
+    }
+    return responseJson;
+}
+export function isStructuredRequestError(error) {
+    return !!error
+        && typeof error === "object"
+        && typeof error.code === "string"
+        && Object.values(ErrorCode).includes(error.code);
+}
+function createStructuredRequestError(code, message, options) {
+    const error = new Error(message);
+    error.code = code;
+    error.summary = options.summary;
+    error.context = options.context;
+    error.nextCommand = options.nextCommand;
+    error.reason = options.reason;
+    return error;
+}
+function parseJsonResponseBody(text) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return {};
+    }
+    try {
+        return JSON.parse(trimmed);
+    }
+    catch {
+        return text;
+    }
+}
+async function readMockHealth(mockUrl, timeoutMs = 2500) {
+    const healthUrl = `${mockUrl.replace(/\/$/, "")}/mock-health`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(healthUrl, { method: "GET", signal: controller.signal });
+        const text = await response.text();
+        return { status: response.status, body: parseJsonResponseBody(text) };
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
+function buildMockServerUnavailableError(apiName, mockUrl, detail) {
+    return createStructuredRequestError(ErrorCode.MOCK_SERVER_UNAVAILABLE, detail, {
+        summary: "The configured mock server is not reachable.",
+        context: {
+            api_name: apiName,
+            mock_url: mockUrl,
+        },
+        nextCommand: `openapi-skills mock-server --api ${apiName}`,
+    });
+}
+function buildMockServerMismatchError(apiName, mockUrl, runningApiName) {
+    return createStructuredRequestError(ErrorCode.MOCK_SERVER_MISMATCH, `The configured mockUrl for API '${apiName}' points to a running mock server for API '${runningApiName}'.`, {
+        summary: "The configured mock URL belongs to a different API.",
+        context: {
+            api_name: apiName,
+            mock_url: mockUrl,
+            expected_api_name: apiName,
+            running_api_name: runningApiName,
+        },
+        nextCommand: `openapi-skills mock-server --api ${apiName}`,
+    });
+}
+async function ensureMockServerAvailable(apiName, mockUrl) {
+    if (!mockUrl.trim()) {
+        throw buildMockServerUnavailableError(apiName, mockUrl, `Mock URL not found in config for API '${apiName}'. Start the mock server first.`);
+    }
+    let health;
+    try {
+        health = await readMockHealth(mockUrl);
+    }
+    catch (error) {
+        throw buildMockServerUnavailableError(apiName, mockUrl, `The configured mock server for API '${apiName}' is not reachable at ${mockUrl}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const healthBody = health.body;
+    const reportedApiName = healthBody && typeof healthBody === "object" && !Array.isArray(healthBody)
+        ? healthBody.apiName
+        : undefined;
+    if (health.status !== 200 || typeof reportedApiName !== "string" || reportedApiName.trim().length === 0) {
+        throw buildMockServerUnavailableError(apiName, mockUrl, `The configured mock server for API '${apiName}' did not return a valid health response at ${mockUrl}/mock-health.`);
+    }
+    const normalizedReportedApiName = reportedApiName.trim();
+    if (normalizedReportedApiName !== apiName) {
+        throw buildMockServerMismatchError(apiName, mockUrl, normalizedReportedApiName);
+    }
+}
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -455,12 +550,20 @@ export async function ensureResponseSchema(apiName, operationId) {
     }
     return responseSchema;
 }
-export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
+export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings, useMockUrl = false) {
     const clientSchema = await buildClientCodeSchema(apiName, operationId, await getSanitizedOperationId(apiName, operationId), force);
     const config = await loadConfig();
-    const baseUrl = config.apis?.[apiName]?.baseUrl;
-    if (!baseUrl)
+    const apiConfig = config.apis?.[apiName];
+    const baseUrl = useMockUrl ? apiConfig?.mockUrl : apiConfig?.baseUrl;
+    if (!baseUrl) {
+        if (useMockUrl) {
+            throw buildMockServerUnavailableError(apiName, "", `Mock URL not found in config for API '${apiName}'. Start the mock server first.`);
+        }
         throw new Error("Base URL not found in config");
+    }
+    if (useMockUrl) {
+        await ensureMockServerAvailable(apiName, baseUrl);
+    }
     if (clientSchema.schemaType === "graphql") {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const gqlOperationSchema = await ensureGraphQLOperationSchema(apiName, operationId, force);
@@ -521,7 +624,11 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
             }
         }
         const responseJson = await fs.readJson(requestContext.responseJsonPath);
-        return { request: requestBody, response: responseJson?.data?.[clientSchema.fieldName], warnings: requestContext.warnings };
+        const responseBody = unwrapResponseBody(responseJson);
+        const data = responseBody && typeof responseBody === "object" && !Array.isArray(responseBody)
+            ? responseBody.data
+            : undefined;
+        return { request: requestBody, response: data?.[clientSchema.fieldName], warnings: requestContext.warnings };
     }
     const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
     const restSchema = await buildClientCodeSchema(apiName, operationId, sanitizedOperationId);
@@ -626,10 +733,10 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
         }
     }
     const responseJson = await fs.readJson(requestContext.responseJsonPath);
-    return { request: requestJson, response: responseJson, warnings: requestContext.warnings };
+    return { request: requestJson, response: unwrapResponseBody(responseJson), warnings: requestContext.warnings };
 }
-export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
-    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings, useMockUrl = false) {
+    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings, useMockUrl);
     const safeWarnings = warnings ?? [];
     if (await getOperationSchemaType(apiName) === "graphql") {
         if (!response || typeof response !== "object") {
@@ -886,6 +993,9 @@ function buildDeterministicTemplate(schema) {
     if (schema.const !== undefined) {
         return schema.const;
     }
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+        return schema.enum[0];
+    }
     if (schema.default !== undefined) {
         return schema.default;
     }
@@ -927,6 +1037,11 @@ function buildDeterministicTemplate(schema) {
         case "boolean":
             return schema.example ?? false;
         case "array":
+            if (schema.items) {
+                const itemSchema = Array.isArray(schema.items) ? schema.items[0] : schema.items;
+                const itemValue = buildDeterministicTemplate(itemSchema);
+                return itemValue === null || itemValue === undefined ? [] : [itemValue];
+            }
             return [];
         case "object":
             const obj = {};
@@ -1013,5 +1128,18 @@ export function getDeterministicResponseBody(operation) {
     if (oas2Schema) {
         return oas2Schema;
     }
+}
+export function buildDeterministicResponseValue(operation) {
+    const schema = getDeterministicResponseBody(operation);
+    if (!schema) {
+        return null;
+    }
+    return buildDeterministicTemplate(schema);
+}
+export function buildDeterministicValueFromSchema(schema) {
+    if (!schema) {
+        return null;
+    }
+    return buildDeterministicTemplate(schema);
 }
 //# sourceMappingURL=validate-response.js.map

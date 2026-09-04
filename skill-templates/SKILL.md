@@ -70,11 +70,16 @@ Fast defaults:
 - `openapi-skills get-operation <operationId> --api <apiName> --response --filter count`
 - `openapi-skills get-operation <operationId> --api <apiName> --response --filter 0`
 - `openapi-skills get-operation <operationId> --api <apiName> --response --filter 0:10`
+- `openapi-skills docs <schemaPath> [--out <path>] [--rename <schemaName>] [--dark] [--open]`
+- `openapi-skills compare --operations --api <apiName> --api <apiName>`
+- `openapi-skills compare --api <apiName> [operationName] --api <apiName> [operationName] [--json]`
+- `openapi-skills mock-server --api <apiName>`
+- `openapi-skills request <operationId> --api <apiName> --mock`
 - `openapi-skills generate-client-schema <operationId> --api <apiName>`
 
 ## Trigger Rules
 
-Use this skill when the user provides an OpenAPI or GraphQL spec file, wants to explore or filter operations, asks for TypeScript or JavaScript client generation, needs to make or debug live API requests, or needs to set or update authentication headers.
+Use this skill when the user provides an OpenAPI or GraphQL spec file, wants to explore or filter operations, wants to compare APIs or operations, asks for TypeScript or JavaScript client generation, needs to make or debug live API requests, wants to run the local mock server, wants to generate Redoc documentation, or needs to set or update authentication headers.
 
 ## Operation Definition
 
@@ -184,6 +189,22 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 3. If the bundled schema changed but the cached <operationId> artifact is stale, rerun with `--force` to overwrite the cached schema first.
 4. Write code using the output structure
 
+### Generate Documentation
+
+1. Use `openapi-skills docs <schemaPath>` to generate offline-capable Redoc HTML for a local schema path or HTTP(S) URL.
+2. Use `--out <path>` for a custom output directory, or omit it to write to `.openapi-skills/<schemaName>/out`.
+3. Use `--rename <schemaName>` when you want to override the schema name used for the default output path.
+4. Use `--dark` for the dark theme, `--open` to launch the browser, and `--no-serve` when you only want the generated files.
+
+### Compare APIs or Operations
+
+1. Use `openapi-skills compare --operations --api <apiA> --api <apiB>` for a surface diff of `endpoints.json`.
+2. Use `openapi-skills compare --api <apiA> <operationA> --api <apiB> <operationB>` for a schema diff between two operations.
+3. Use `openapi-skills compare --api <apiA> --api <apiB> --op <operationName>` when both APIs should use the same operation name.
+4. Add `--json` to suppress the human-readable stderr summary.
+5. Compare automatically extracts missing `endpoints.json` and operation schema artifacts before diffing, so no manual `describe` step is required.
+6. In interactive terminals, compare prints a colored human summary and conservative breaking-change hints on stderr while preserving JSON output on stdout.
+
 ### Debug a Request
 
 1. Validate the response with `openapi-skills request <operationId> --api <apiName> --validate`.
@@ -191,6 +212,12 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 2. If you need to change the request shape, rebuild it with `--force` first.
 3. Inspect the request artifact, then patch only existing fields with flattened dot-notation keys.
 4. Re-run validation after each change.
+
+### Use the Local Mock Server
+
+1. Start the server with `openapi-skills mock-server --api <apiName>`.
+2. Use `openapi-skills request <operationId> --api <apiName> --mock` to send the CLI request to the local mock URL instead of the live `baseUrl`.
+3. If a saved `response.json` exists, the mock server replays it. Otherwise it generates a deterministic fallback from the available schema artifacts.
 
 ### Prepare a Multi-Step Flow
 

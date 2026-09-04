@@ -34,12 +34,14 @@ Enable the optional Skill bundle, and AI agents (Copilot, Claude, Cursor, etc.) 
 
 - Explore operations by method, path, tag, or keyword  
 - Describe endpoints with full request/response details  
+- Compare APIs or operations with automatic artifact extraction  
 - Prepare and execute live API requests (Postman‑like, no code needed)  
 - Parse OpenAPI 2.0/3.x and GraphQL schemas  
 - Generate artifacts (`endpoints.json`, `schemas/`)
 - Work with multiple API schemas simultaneously (stored under: .openapi-skills/<apiName>/ directory)
 - Validate schemas and API responses  
 - Build multi-step scenarios  
+- Run a local mock server from generated artifacts and point requests at it  
 - AI Skills bundle for agent-driven workflows (code, tests, clients, docs)
 
 ## Workflow
@@ -82,6 +84,9 @@ This creates:
 openapi-skills list --api petstore --method POST --index 0:10
 openapi-skills list --api petstore --method GET --path /pet --tag pet
 openapi-skills describe addPet --api petstore
+openapi-skills compare --operations --api petstore --api petstore-v2
+openapi-skills compare --api petstore addPet --api petstore-v2 addPetV2
+openapi-skills compare --api petstore --api petstore-v2 --op addPet
 ```
 
 ### Prepare and execute a request manually
@@ -89,6 +94,43 @@ openapi-skills describe addPet --api petstore
 ```bash
 openapi-skills request addPet --api petstore --force --update-request '{"body.id":1,"body.name":"Fluffy"}'
 ```
+
+### Run a local mock server
+
+```bash
+openapi-skills mock-server --api petstore
+```
+
+The mock server serves routes from generated artifacts for the selected API and persists the running URL in `.openapi-skills/config.json` as `apis.<apiName>.mockUrl`.
+
+You can point any HTTP client you use during development at the mock server, including `fetch`, `axios`, `curl`, Postman, Insomnia, or your own app code.
+
+The mock server also exposes a reserved `GET /mock-health` endpoint that returns a small JSON status payload:
+
+```json
+{ "ok": true, "apiName": "petstore", "status": "running" }
+```
+
+Use it with `request --mock` to send CLI requests to the local server instead of the configured live `baseUrl`:
+
+```bash
+openapi-skills request addPet --api petstore --mock
+```
+
+If a saved `response.json` exists, the mock server replays it. If it is missing, the server generates a deterministic JSON fallback from the available schema artifacts.
+
+### Generate API docs
+
+```bash
+openapi-skills docs main-schema/openapi.json
+openapi-skills docs main-schema/openapi.json --out docs/
+openapi-skills docs main-schema/openapi.json --rename petstore --dark --open
+openapi-skills docs https://example.com/openapi.json --out docs/
+```
+
+The `docs` command accepts an absolute path, a path relative to the project root, or an HTTP(S) URL to an OpenAPI 2/3 schema. It copies or downloads the schema into the output directory, generates an `index.html`, and starts a local HTTP server by default so Redoc can render reliably. The default output directory is `.openapi-skills/<schemaName>/out`, and `--rename` changes the schema name used in that default path.
+
+Use `--dark` for the dark theme, `--open` to launch the browser, and `--no-serve` if you only want the generated files.
 
 ---
 
@@ -166,6 +208,7 @@ openapi-skills generate https://petstore.swagger.io/v2/swagger.json --base-url=h
 ```bash
 openapi-skills list --api petstore --method POST --index 0
 openapi-skills describe addPet --api petstore
+openapi-skills compare --operations --api petstore --api petstore-v2
 ```
 
 ### 4. Build and execute a request
@@ -174,7 +217,18 @@ openapi-skills describe addPet --api petstore
 openapi-skills request addPet --api petstore --force --update-request '{"body.id":1,"body.name":"Fluffy"}'
 ```
 
-### 5. Validate the schema
+### 5. Compare two APIs
+
+```bash
+openapi-skills compare --operations --api petstore --api petstore-v2
+openapi-skills compare --api petstore addPet --api petstore-v2 addPetV2
+openapi-skills compare --operations --json --api petstore --api petstore-v2
+```
+
+Compare automatically extracts missing `endpoints.json` and operation schema artifacts before diffing, so you do not need to run `describe` or `request` first.
+In an interactive terminal, compare also prints a colored human summary to stderr and highlights conservative breaking-change findings.
+
+### 6. Validate the schema
 
 ```bash
 openapi-skills generate https://petstore.swagger.io/v2/swagger.json --validate
@@ -192,6 +246,7 @@ openapi-skills generate https://petstore.swagger.io/v2/swagger.json --validate
 | “Create a Playwright API test for addPet.” | Agent generates Playwright test using endpoint + schema |
 | “Build a TypeScript API client for this API.” | Agent generates typed client functions + models |
 | “Create a 3-step scenario: add, fetch, delete pet.” | Multi-step workflow via `request` |
+| “Start a local mock server for petstore and point requests at it.” | `mock-server` plus `request --mock` |
 
 Agents combine CLI output with code generation to produce:
 - typed API clients  
@@ -200,6 +255,11 @@ Agents combine CLI output with code generation to produce:
 - mocks & fixtures  
 - multi-step workflows  
 - documentation  
+
+Additional compare examples:
+
+- “Compare addPet between v1 and v2.” -> `compare --api ... --api ... --op addPet`
+- “Show API surface changes between two specs.” -> `compare --operations`
 
 ## 🎥 Video demo
 

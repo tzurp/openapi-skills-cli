@@ -1,6 +1,10 @@
 export declare function getSchemaPath(apiName: string, schemaName: string): string;
 export declare function getBundledPath(apiName: string): string;
 export declare function getComponentsPath(apiName: string): string;
+export declare function getDocsOutputDir(apiName: string): string;
+export declare function getDocsAssetsDir(): string;
+export declare function getRedocStandalonePath(): string;
+export declare function getDocsSchemaPath(apiName: string, extension: "yaml" | "json"): string;
 export declare function findRequestResponseDir(apiName: string, sanitizedOperationId: string): string;
 export declare function getSchemasDir(apiName: string): string;
 export declare function getApiDir(apiName: string): string;
