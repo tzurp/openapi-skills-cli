@@ -51,7 +51,7 @@ Enable the optional Skill bundle, and AI agents (Copilot, Claude, Cursor, etc.) 
 ### Install the CLI
 
 ```bash
-npm install -g openapi-skills
+npm install -g @tzurp/openapi-skills
 ```
 
 ### Install the Skill
@@ -125,7 +125,7 @@ You can always ask the skill question to progress in your work. For example:
 ### 1. Install the CLI
 
 ```bash
-npm install -g openapi-skills
+npm install -g @tzurp/openapi-skills
 ```
 
 ### Install the Skill
@@ -225,6 +225,6 @@ If you run into issues or have questions:
 
 ## Links
 
-- npm package: [https://www.npmjs.com/package/openapi-skills](https://www.npmjs.com/package/openapi-skills)
+- npm package: [https://www.npmjs.com/package/@tzurp/openapi-skills](https://www.npmjs.com/package/@tzurp/openapi-skills)
 - GitHub repository: [https://github.com/tzurp/openapi-skills-cli](https://github.com/tzurp/openapi-skills-cli)
 ```

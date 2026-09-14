@@ -11,7 +11,7 @@ export async function checkForUpdateOncePerTerminalSession(currentVersion) {
             return;
         fs.writeFileSync(sessionFile, String(Date.now()));
         const latestVersion = await new Promise((resolve, reject) => {
-            https.get("https://registry.npmjs.org/openapi-skills/latest", res => {
+            https.get("https://registry.npmjs.org/@tzurp/openapi-skills/latest", res => {
                 let data = "";
                 res.on("data", chunk => (data += chunk));
                 res.on("end", () => {
@@ -27,7 +27,7 @@ export async function checkForUpdateOncePerTerminalSession(currentVersion) {
         });
         if (latestVersion && latestVersion !== currentVersion) {
             logger.warn(`UPDATE_AVAILABLE: A newer version of openapi-skills is available → ${latestVersion} (current: ${currentVersion})`);
-            logger.warn("Update with: npm install -g openapi-skills");
+            logger.warn("Update with: npm install -g @tzurp/openapi-skills");
         }
     }
     catch {
