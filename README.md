@@ -1,6 +1,9 @@
 
 # openapi-skills
 API CLI with SKILLS
+
+![Legacy downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/openapi-skills&query=$.downloads&label=Legacy%20downloads&color=blue)
+![openapi-skills downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/@tzurp/openapi-skills&query=$.downloads&label=Current%20downloads&color=blue)
 <p align="center">
 <img src="https://raw.githubusercontent.com/tzurp/images/refs/heads/main/openapi-skills.png">
 </p>
