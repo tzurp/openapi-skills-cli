@@ -208,7 +208,7 @@ Agents combine CLI output with code generation to produce:
 
 A short video clip demonstrating the CLI in action is available here:
 
-[https://github.com/tzurp/openapi-skills-cli/releases#release-video](https://github.com/tzurp/openapi-skills-cli/releases#release-video)
+[https://github.com/tzurp/openapi-skills-cli/releases/tag/video](https://github.com/tzurp/openapi-skills-cli/releases/tag/video)
 
 ## Support
 
