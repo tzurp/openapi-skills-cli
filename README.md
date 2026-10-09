@@ -1,6 +1,7 @@
 
-# openapi-skills
-API CLI with SKILLS
+# openapi-skills: OpenAPI & GraphQL CLI
+
+`openapi-skills` is an OpenAPI CLI and GraphQL CLI for exploring APIs, generating artifacts, validating schemas, and preparing live API requests. Its optional AI agent skills enable Copilot, Claude, Cursor, and other agents to use the CLI through natural language.
 
 ![Legacy downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/openapi-skills&query=$.downloads&label=Legacy%20downloads&color=blue)
 ![openapi-skills downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/@tzurp/openapi-skills&query=$.downloads&label=Current%20downloads&color=blue)
@@ -13,7 +14,16 @@ Use it manually like a fast, lightweight API explorer, or unlock its full potent
 
 With Skills enabled, openapi‑skills becomes an AI‑ready API engine: agents can explore your API, prepare and execute live requests, validate schemas, and even generate client code, tests, and workflows - all from simple, conversational instructions.
 
-## Overview
+## Quick links
+
+- [Install the CLI](#install-the-cli)
+- [Install the AI skill bundle](#install-the-skill)
+- [Quick start](#quick-start)
+- [AI agent examples](#ai-agent-integration)
+- [Video demo](#-video-demo)
+- [Support and issues](#support)
+
+## Overview: OpenAPI & GraphQL CLI
 
 `openapi-skills` helps developers work with API schemas efficiently. It parses OpenAPI and GraphQL definitions, generates structured artifacts, provides exploration tools, validates schemas, prepares request templates, and supports test generation. When the AI skills are installed, agents can understand your API and execute CLI commands automatically.
 
@@ -155,7 +165,7 @@ Select your preferred path and confirm — that’s it.
 > **💡 Note:**
 >
 > Installing the skill bundle allows AI agents to understand your API structure and execute CLI commands automatically.  
-> See the section on [AI agent capabilities](#ai-agent-capabilities-some-examples).
+> See the section on [AI agent capabilities](#ai-agent-integration).
 
 
 ### 2. Parse a public API and set its base URL
@@ -183,7 +193,17 @@ openapi-skills request addPet --api petstore --force --update-request '{"body.id
 openapi-skills generate https://petstore.swagger.io/v2/swagger.json --validate
 ```
 
-## Examples of what AI agents can do when the Skill is enabled
+## AI agent integration
+
+The optional skill bundle teaches AI agents how to operate this API CLI using natural-language instructions. With the skill enabled, agents can:
+
+- Explore OpenAPI and GraphQL schemas and API operations
+- Generate client code, tests, documentation, and other artifacts
+- Prepare and execute live API requests
+- Validate schemas and API responses
+- Build multi-step API workflows
+
+### AI agent examples
 
 | Natural language request | CLI/Skill executed |
 |--------------------------|--------------------|
@@ -208,7 +228,7 @@ Agents combine CLI output with code generation to produce:
 
 A short video clip demonstrating the CLI in action is available here:
 
-[https://github.com/tzurp/openapi-skills-cli/releases#release-video](https://github.com/tzurp/openapi-skills-cli/releases#release-video)
+[https://github.com/tzurp/openapi-skills-cli/releases/tag/video](https://github.com/tzurp/openapi-skills-cli/releases/tag/video)
 
 ## Support
 
@@ -230,4 +250,4 @@ If you run into issues or have questions:
 
 - npm package: [https://www.npmjs.com/package/@tzurp/openapi-skills](https://www.npmjs.com/package/@tzurp/openapi-skills)
 - GitHub repository: [https://github.com/tzurp/openapi-skills-cli](https://github.com/tzurp/openapi-skills-cli)
-```
+- Bedekbyte: [https://www.bedekbyte.com](https://www.bedekbyte.com)
