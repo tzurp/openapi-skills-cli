@@ -13,7 +13,7 @@ Use it manually like a fast, lightweight API explorer, or unlock its full potent
 
 With Skills enabled, openapi‑skills becomes an AI‑ready API engine: agents can explore your API, prepare and execute live requests, validate schemas, and even generate client code, tests, and workflows - all from simple, conversational instructions.
 
-## Overview
+## Overview — OpenAPI & GraphQL CLI
 
 `openapi-skills` helps developers work with API schemas efficiently. It parses OpenAPI and GraphQL definitions, generates structured artifacts, provides exploration tools, validates schemas, prepares request templates, and supports test generation. When the AI skills are installed, agents can understand your API and execute CLI commands automatically.
 
