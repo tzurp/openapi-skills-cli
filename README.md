@@ -1,6 +1,9 @@
 
 # openapi-skills: OpenAPI & GraphQL CLI
 
+Looking for the Pro version? → https://github.com/tzurp/openapi-skills-pro
+[![Pro version](https://img.shields.io/badge/openapi--skills--pro-Repository-blue)](https://github.com/tzurp/openapi-skills-pro)
+
 `openapi-skills` is an OpenAPI CLI and GraphQL CLI for exploring APIs, generating artifacts, validating schemas, and preparing live API requests. Its optional AI agent skills enable Copilot, Claude, Cursor, and other agents to use the CLI through natural language.
 
 ![Legacy downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/openapi-skills&query=$.downloads&label=Legacy%20downloads&color=blue)
@@ -50,7 +53,7 @@ Here’s a concise comparison to help you understand where each version shines:
 | **Generate artifacts** | ✔ endpoints.json, schemas/ | ✔ Extended artifacts for docs, diffing & analysis |
 | **Validate schemas** | ✔ Built‑in validation | ✔ Deep validation + version comparison |
 | **Prepare & execute live API requests** | ✔ Postman‑like request builder | ✔ Same, plus mock‑server integration |
-| **AI agent workflows** | ✔ Optional skill bundle for LLM agents | ✔ Enhanced Skills for generating OpenAPI schema annotations |
+| **AI agent workflows** | ✔ Optional skill bundle for LLM agents | ✔ Enhanced Skills (OpenAPI annotation generation) |
 | **Mock server** | — | ✔ Local mock server from schema artifacts |
 | **HTML API documentation** | — | ✔ Generate interactive HTML docs |
 | **Schema diffing / version comparison** | — | ✔ Operation‑level diffing & breaking‑change detection |
