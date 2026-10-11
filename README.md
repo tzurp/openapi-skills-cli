@@ -37,6 +37,26 @@ Working with API schemas can be slow and error‑prone. `openapi-skills` provide
 - Built‑in validation tools  
 - Optional AI integration for natural-language workflows  
 
+## Free vs. Pro: Choosing the right tool for your workflow
+
+The free CLI is perfect for solo developers, quick exploration, and everyday API work.  
+The Pro CLI is built for teams, automation, and production‑grade workflows, where speed, orchestration, and tooling depth matter.  
+Here’s a concise comparison to help you understand where each version shines:
+
+### Comparison Table
+| **Scenario / Workflow** | **Free CLI** | **Pro CLI** |
+| --- | --- | --- |
+| **Explore OpenAPI & GraphQL schemas** | ✔ Explore OpenAPI 2.0 / 3.0.x & GraphQL schemas | ✔ Same, with OpenAPI 3.1 support |
+| **Generate artifacts** | ✔ endpoints.json, schemas/ | ✔ Extended artifacts for docs, diffing & analysis |
+| **Validate schemas** | ✔ Built‑in validation | ✔ Deep validation + version comparison |
+| **Prepare & execute live API requests** | ✔ Postman‑like request builder | ✔ Same, plus mock‑server integration |
+| **AI agent workflows** | ✔ Optional skill bundle for LLM agents | ✔ Enhanced Skills for generating OpenAPI schema annotations |
+| **Mock server** | — | ✔ Local mock server from schema artifacts |
+| **HTML API documentation** | — | ✔ Generate interactive HTML docs |
+| **Schema diffing / version comparison** | — | ✔ Operation‑level diffing & breaking‑change detection |
+| **Code‑first OpenAPI generation** | — | ✔ Bootstrap OpenAPI from annotated source code |
+| **Distribution** | ``npm install -g`` | Native installers (Windows/macOS/Linux) |
+
 ## Manual CLI + AI Skills
 
 openapi-skills works perfectly as a traditional CLI. You can explore endpoints, inspect schemas, prepare requests, and execute live API calls directly from the terminal.
