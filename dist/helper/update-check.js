@@ -5,7 +5,7 @@ import path from "path";
 import { logger } from "./logger.js";
 export async function checkForUpdateOncePerTerminalSession(currentVersion) {
     try {
-        const sessionId = String(process.ppid);
+        const sessionId = new Date().toISOString().slice(0, 10);
         const sessionFile = path.join(os.tmpdir(), `openapi-skills-session-${sessionId}`);
         if (fs.existsSync(sessionFile))
             return;
@@ -29,6 +29,7 @@ export async function checkForUpdateOncePerTerminalSession(currentVersion) {
             logger.warn(`UPDATE_AVAILABLE: A newer version of openapi-skills is available → ${latestVersion} (current: ${currentVersion})`);
             logger.warn("Update with: npm install -g @tzurp/openapi-skills");
         }
+        logger.banner("💎  openapi-skills v2 is available — including mock APIs, HTML docs, schema diffing, code‑first tools, full OpenAPI 3.1 support, premium support, and additional Pro tools.\n    https://openapi-skills.lemonsqueezy.com/");
     }
     catch {
     }

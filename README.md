@@ -1,9 +1,12 @@
 
 # openapi-skills: OpenAPI & GraphQL CLI
 
+Looking for the Pro version? → https://github.com/tzurp/openapi-skills-pro
+[![Pro version](https://img.shields.io/badge/openapi--skills--pro-Repository-blue)](https://github.com/tzurp/openapi-skills-pro)
+
 `openapi-skills` is an OpenAPI CLI and GraphQL CLI for exploring APIs, generating artifacts, validating schemas, and preparing live API requests. Its optional AI agent skills enable Copilot, Claude, Cursor, and other agents to use the CLI through natural language.
 
-![Legacy downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/openapi-skills&query=$.downloads&label=Legacy%20downloads&color=blue)
+![Legacy downloads](https://img.shields.io/badge/Legacy%20downloads-5347-blue)
 ![openapi-skills downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/@tzurp/openapi-skills&query=$.downloads&label=Current%20downloads&color=blue)
 <p align="center">
 <img src="https://raw.githubusercontent.com/tzurp/images/refs/heads/main/openapi-skills.png">
@@ -36,6 +39,26 @@ Working with API schemas can be slow and error‑prone. `openapi-skills` provide
 - Request templates you can execute immediately  
 - Built‑in validation tools  
 - Optional AI integration for natural-language workflows  
+
+## Free vs. Pro: Choosing the right tool for your workflow
+
+The free CLI is perfect for solo developers, quick exploration, and everyday API work.  
+The Pro CLI is built for teams, automation, and production‑grade workflows, where speed, orchestration, and tooling depth matter.  
+Here’s a concise comparison to help you understand where each version shines:
+
+### Comparison Table
+| **Scenario / Workflow** | **Free CLI** | **Pro CLI** |
+| --- | --- | --- |
+| **Explore OpenAPI & GraphQL schemas** | ✔ Explore OpenAPI 2.0 / 3.0.x & GraphQL schemas | ✔ Same, with OpenAPI 3.1 support |
+| **Generate artifacts** | ✔ endpoints.json, schemas/ | ✔ Extended artifacts for docs, diffing & analysis |
+| **Validate schemas** | ✔ Built‑in validation | ✔ Deep validation + version comparison |
+| **Prepare & execute live API requests** | ✔ Postman‑like request builder | ✔ Same, plus mock‑server integration |
+| **AI agent workflows** | ✔ Optional skill bundle for LLM agents | ✔ Enhanced Skills (OpenAPI annotation generation) |
+| **Mock server** | — | ✔ Local mock server from schema artifacts |
+| **HTML API documentation** | — | ✔ Generate interactive HTML docs |
+| **Schema diffing / version comparison** | — | ✔ Operation‑level diffing & breaking‑change detection |
+| **Code‑first OpenAPI generation** | — | ✔ Bootstrap OpenAPI from annotated source code |
+| **Distribution** | ``npm install -g`` | Native installers (Windows/macOS/Linux) |
 
 ## Manual CLI + AI Skills
 
@@ -207,14 +230,14 @@ The optional skill bundle teaches AI agents how to operate this API CLI using na
 
 | Natural language request | CLI/Skill executed |
 |--------------------------|--------------------|
-| “Make a live request to addPet with name Fluffy.” | Postman‑like API call via `request --update-request` |
-| “Show me the first POST operation.” | Explore endpoints via `list` |
-| “Describe the addPet operation.” | Operation breakdown via `describe` |
-| “Validate this API schema.” | Schema validation via `generate --validate` |
-| “Generate a Jest test for addPet.” | Agent writes full Jest test using CLI metadata |
-| “Create a Playwright API test for addPet.” | Agent generates Playwright test using endpoint + schema |
-| “Build a TypeScript API client for this API.” | Agent generates typed client functions + models |
-| “Create a 3-step scenario: add, fetch, delete pet.” | Multi-step workflow via `request` |
+| "/openapi-skills Make a live request to addPet with name Fluffy." | Postman‑like API call via `request --update-request` |
+| "/openapi-skills Show me the first POST operation." | Explore endpoints via `list` |
+| "/openapi-skills Describe the addPet operation." | Operation breakdown via `describe` |
+| "/openapi-skills Validate this API schema." | Schema validation via `generate --validate` |
+| "/openapi-skills Generate a Jest test for addPet." | Agent writes full Jest test using CLI metadata |
+| "/openapi-skills Create a Playwright API test for addPet." | Agent generates Playwright test using endpoint + schema |
+| "/openapi-skills Build a TypeScript API client for this API." | Agent generates typed client functions + models |
+| "/openapi-skills Create a 3-step scenario: add, fetch, delete pet." | Multi-step workflow via `request` |
 
 Agents combine CLI output with code generation to produce:
 - typed API clients  

@@ -1,6 +1,6 @@
 {
   "name": "@tzurp/openapi-skills",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "description": "CLI toolkit for exploring OpenAPI and GraphQL schemas, generating operation artifacts, validators, and tests. Includes an agent skill bundle that teaches AI tools how to operate the CLI safely and efficiently.",
   "bin": {
     "openapi-skills": "bin/openapi-skills"
@@ -15,6 +15,7 @@
   "scripts": {
     "test": "vitest --reporter verbose",
     "build": "tsc",
+    "package:npm": "npm run build && npm test && node scripts/package-npm.mjs",
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
@@ -39,6 +40,7 @@
     "@types/prompts": "^2.4.9",
     "@vitest/coverage-v8": "^4.1.1",
     "@vitest/ui": "^4.1.1",
+    "esbuild": "^0.28.2",
     "execa": "^10.0.1",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",

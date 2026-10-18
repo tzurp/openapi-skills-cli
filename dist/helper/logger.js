@@ -16,6 +16,9 @@ export const logger = {
             writeStderr(prefix + message, true);
         }
     },
+    banner(message) {
+        writeStderr(isInteractive ? `\x1b[35m${message}\x1b[0m` : message, true);
+    },
     error(message) {
         process.stderr.write(`❌  ${message}\n`);
     },
