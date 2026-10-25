@@ -203,13 +203,29 @@ async function loadOpenAPIDocument(openapiSource, dereference) {
     }
 }
 function detectOpenApiVersion(doc) {
-    if (typeof doc.swagger === "string" && doc.swagger.startsWith("2.")) {
-        return "2";
+    if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
+        throw new Error("Invalid OpenAPI schema: expected a document object.");
     }
-    if (typeof doc.openapi === "string" && doc.openapi.startsWith("3.")) {
-        return "3";
+    const document = doc;
+    if (document.swagger !== undefined && document.openapi !== undefined) {
+        throw new Error("Invalid OpenAPI schema: both 'swagger' and 'openapi' version fields are present.");
     }
-    return "2";
+    if (document.swagger !== undefined) {
+        if (document.swagger === "2.0") {
+            return "2";
+        }
+        throw new Error(`Unsupported Swagger version '${String(document.swagger)}'. This CLI supports Swagger 2.0 and OpenAPI 3.0.x.`);
+    }
+    if (document.openapi !== undefined) {
+        if (typeof document.openapi !== "string") {
+            throw new Error("Invalid OpenAPI schema: 'openapi' version must be a string.");
+        }
+        if (/^3\.0\.\d+$/.test(document.openapi)) {
+            return "3";
+        }
+        throw new Error(`Unsupported OpenAPI version '${document.openapi}'. This CLI supports OpenAPI 2.0 and 3.0.x; For OpenAPI 3.1.0 and later, please use openapi-skills Pro.`);
+    }
+    throw new Error("Invalid OpenAPI schema: missing version declaration ('swagger' or 'openapi'); cannot determine a supported version.");
 }
 async function parseOpenAPI(openapiSource, baseUrl, options = {}) {
     let apiName = "";

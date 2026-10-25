@@ -16,7 +16,7 @@ export declare function resolveMultiOperationIds(apiName: string, operationIds: 
     operationId: string;
     sanitizedOperationId: string;
 }>>;
-export declare function prepareMultiOperationRequests(apiName: string, operationIds: string[], force?: boolean): Promise<{
+export declare function prepareMultiOperationRequests(apiName: string, operationIds: string[], force?: boolean, forceRequest?: boolean): Promise<{
     operations: PreparedRequestOperation[];
     summaryText: string;
     payload: Record<string, unknown>;

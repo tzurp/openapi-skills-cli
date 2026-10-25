@@ -31,13 +31,13 @@ export declare function buildRequestBodyTransport(operationSchema: any, requestJ
 export declare function getSchemaType(apiName: string): Promise<"openapi" | "graphql">;
 export declare function collectRequestUpdateTypeWarnings(requestJson: RequestJson, requestJsonUpdates: Updates): string[];
 export declare function ensureResponseSchema(apiName: string, operationId: string): Promise<any>;
-export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[]): Promise<MakeRequestResult>;
-export declare function validateResponse(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[]): Promise<{
+export declare function makeRequest(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[], omitEmpty?: boolean, forceRequest?: boolean): Promise<MakeRequestResult>;
+export declare function validateResponse(apiName: string, operationId: string, force?: boolean, cliHeaders?: Record<string, string>, requestJsonUpdates?: Updates, requestJsonWarnings?: string[], omitEmpty?: boolean, forceRequest?: boolean): Promise<{
     valid: boolean;
     errors?: string[];
     warnings?: string[];
 }>;
-export declare function prepareRequestTemplate(apiName: string, sanitizedOperationId: string, force?: boolean): Promise<{
+export declare function prepareRequestTemplate(apiName: string, sanitizedOperationId: string, force?: boolean, forceRequest?: boolean): Promise<{
     requestJsonPath: string;
     responseJsonPath: string;
     requestJson: RequestJson;

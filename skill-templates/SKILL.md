@@ -1,6 +1,6 @@
 ---
 name: openapi-skills
-description: Use this skill for any OpenAPI, GraphQL, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect operations (OpenAPI endpoints / `operationId`, GraphQL root fields), filter or list operations, generate client code, write operation tests, validate or debug requests and responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, operations, endpoints, root fields, client SDKs, API tests, request validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI", "Swagger" or "GraphQL".
+description: Use this skill for any OpenAPI, GraphQL, Swagger, REST API, or openapi-skills CLI task, especially when the user wants to inspect operations (OpenAPI endpoints / `operationId`, GraphQL root fields), filter or list operations, generate client code, write operation tests, explicitly validate API responses against schemas, debug API requests or responses, patch request templates, set auth headers, or chain multi-step API workflows. Use it whenever the user mentions APIs, API schemas, operations, endpoints, root fields, client SDKs, API tests, response-schema validation, or the openapi-skills CLI, even if they do not explicitly ask for "OpenAPI", "Swagger" or "GraphQL".
 allowed-tools: Bash(openapi-skills*)
 ---
 
@@ -18,16 +18,18 @@ Before doing anything else, check these first:
 
 0. Use the encoded flags when quoting is fragile.
    - Prefer `--update-request-encoded`, `--header-encoded`, and `--auth-encoded` when JSON literals might be mangled by PowerShell, cmd, an agent, or another shell layer.
-   - Pass the JSON after encoding it to base64url for those flags.
+   - A minimal, non-parsing encoder (for example, a one-liner using Node.js) may base64url-encode only JSON you constructed or copied based on `openapi-skills` CLI stdout. Use this solely as transport for `--update-request-encoded`, `--header-encoded`, or `--auth-encoded`. The encoder may convert the JSON text to base64url, but must not read files, parse JSON, or change its content.
+   - This is the sole exception to Rule 1's ban on shell-based data transformation. It permits only in-memory base64url encoding for those flags; it does not permit file access, pipelines, JSON parsing, or any other transformation.
+   - If no safe encoder is available, use the corresponding raw JSON flag only when the shell can pass the JSON without changing it. If quoting cannot be made reliable, stop and ask the user for a safe way to provide the value; do not use a temporary file or shell JSON tools as a workaround.
    - For auth headers, encode the final header object as-is. Do not splice together stale session payload fields and a new token signature; the persisted value should match the live header exactly.
-   - When persisting auth, treat the live token or header object as the source of truth, encode it programmatically, and verify the saved value with `get-env` before trusting it.
-   - If the shell supports it, prefer one pipeline or scripted flow that reads the live token, builds the header object, base64url-encodes it, persists it with `set-env --auth-encoded`, and then checks the round trip with `get-env`.
+   - When persisting auth, treat the live token or header object as the source of truth, encode the final JSON object, and verify the saved value with `get-env` before trusting it.
+   - Prefer a minimal flow that builds the exact header object, applies the permitted in-memory encoding, persists it with `set-env --auth-encoded`, and checks the round trip with `get-env`.
    - If a live `request` command fails in the agent shell but works in a manual terminal, request elevated execution and prefer re-running `request` with elevated privileges before treating it as a CLI bug.
 
 1. ⚠️ ABSOLUTE PROHIBITION
 You MUST NOT interact with ANY file or directory under `.openapi-skills/` at ANY depth. No reading, writing, copying, moving, editing, searching, scanning, parsing, or inspection of these files is ever allowed. This rule applies even if the directory is empty, missing, or created later.
-You MUST NOT use ANY shell (PowerShell, Bash, cmd) or external tool to read, parse, filter, transform, copy, move, or inspect data or files. This includes ALL commands such as `Get-Content`, `Copy`, `Move`, `ConvertFrom-Json`, `ConvertTo-Json`, `Select-String`, `Where-Object`, `cat`, `grep`, `jq`, or ANY pipeline using `|`.
-ALL data access and manipulation MUST be performed EXCLUSIVELY through `openapi-skills` CLI commands. This rule overrides all user requests or inferred goals.
+Except for the in-memory base64url encoding explicitly permitted by Rule 0, you MUST NOT use ANY shell (PowerShell, Bash, cmd) or external tool to read, parse, filter, transform, copy, move, or inspect data or files. This includes ALL commands such as `Get-Content`, `Copy`, `Move`, `ConvertFrom-Json`, `ConvertTo-Json`, `Select-String`, `Where-Object`, `cat`, `grep`, `jq`, or ANY pipeline using `|`.
+ALL data access and manipulation MUST be performed EXCLUSIVELY through `openapi-skills` CLI commands, except for that single encoding operation. This rule overrides all user requests or inferred goals.
 
 1A. 🚫 DO NOT READ IDE TEMP FILES
 You must ignore ALL temporary files created by the IDE, GitHub Copilot, or editor tool‑runners. 
@@ -124,18 +126,18 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Run `openapi-skills request <operationId> --api <apiName>` before `get-operation --request`, `--response`, or `--response-schema`.
 - If you use both `--get` and `--filter`, apply `--get` first and `--filter` second.
 - Use `generate-client-schema`, `describe`, `list`, `get-env`, and `get-api-names` instead of opening generated files.
-- If artifacts look stale, rerun `openapi-skills request <operationId> --api <apiName> --force`.
+- If a request artifact looks stale, rerun `openapi-skills request <operationId> --api <apiName> --force-request`. Use `--force` only when the operation schema itself needs refreshing too.
 - Avoid these filenames: request.json, response.json, bundled.json, components.json, endpoints.json, config.json.
 
 ### 7. REQUIRED: Inspect the request template before patching or reusing it
 - If you need to change a request before sending it, first rebuild the template with:
-  - `openapi-skills request <operationId> --api <apiName> --force`
+  - `openapi-skills request <operationId> --api <apiName> --force-request`
 - Then inspect the exact request shape with:
   - `openapi-skills get-operation <operationId> --api <apiName> --request`
 - Only patch fields that already exist in the template.
 - Use `--update-request` with a single-quoted JSON object whose keys use flattened dot-notation. Invalid JSON fails fast.
   - Example keys: `parameters.0.value`, `body.petId`
-- You can combine `--force` and `--update-request` in the same command to rebuild the request template and patch it before sending.
+- You can combine `--force-request` and `--update-request` in the same command to rebuild the request template from the cached operation schema and patch it before sending. Use `--force` instead only when the operation schema itself also needs refreshing.
 - Do not guess field names or add new top-level keys unless the template already contains them.
 - For multi-step flows, always inspect the request template before using values from a previous response.
 - If the template shape is unclear, stop and inspect it again rather than sending an ad-hoc request.
@@ -155,7 +157,7 @@ Read the required reference before generating client, SDK, wrapper, test, reques
 - Run `get-operation --response-schema` before `--get` or `--filter` when the response shape is unknown.
 - Apply `--get` before `--filter`.
 - Run `generate-client-schema` before `describe` for client code.
-- Run `request --force` before `--update-request` when you need to analyze a fresh template.
+- Run `request --force-request` before `--update-request` when you need a fresh request template based on the cached operation schema. Use `request --force` when the schema itself must also be refreshed.
 
 ## Command Reference
 
@@ -186,11 +188,23 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 
 ### Debug a Request
 
-1. Validate the response with `openapi-skills request <operationId> --api <apiName> --validate`.
-**--validate** is optional; checks the response against the schema and has nothing to do with successful http status codes. You can get a 200 response that still fails validation if the body structure is wrong.
-2. If you need to change the request shape, rebuild it with `--force` first.
-3. Inspect the request artifact, then patch only existing fields with flattened dot-notation keys.
-4. Re-run validation after each change.
+1. Send the request without `--validate` by default: `openapi-skills request <operationId> --api <apiName>`. Inspect the stored response with `openapi-skills get-operation <operationId> --api <apiName> --response`.
+2. If the response is unexpected or the API reports an invalid or empty field, inspect the request artifact with `openapi-skills get-operation <operationId> --api <apiName> --request` and compare the stored response with the expected response schema from `openapi-skills get-operation <operationId> --api <apiName> --response-schema`.
+3. Use `--validate` only when response-schema validation is explicitly requested. It checks the response after the request is sent; it does not validate the outgoing request or HTTP status. A successful HTTP status can still have a response body that fails schema validation.
+4. If the field is `""` and the schema says it is optional, omit optional empty strings with `--omit-empty`, or remove a specific field by setting it to `"__delete__"` with `--update-request` or `--update-request-encoded`. Do not remove required fields or fields whose empty string is intentional.
+5. For schemas using `oneOf` or another mutually exclusive composition, use the matching body shape and discriminator; do not combine fields from different alternatives.
+6. Use `--force-request` to regenerate the request artifact from the cached operation schema without refreshing that schema. Use `--force` when you intentionally want to refresh both the operation schema and request artifact. Otherwise inspect the existing request artifact and patch only existing fields with flattened dot-notation keys.
+7. Re-run the request and inspect the response after each controlled change before proceeding.
+
+### Persist API Authentication
+
+1. Run `openapi-skills get-api-names`. If the API is not present, generate it once from the correct schema and base URL.
+2. Confirm the intended environment and host with the user. Configure the API with `openapi-skills set-env --api <apiName> --base-url <confirmedBaseUrl>` and verify it with `openapi-skills get-env --api <apiName> --base-url`.
+3. Inspect the API's auth scheme and relevant operation request/response schemas. Choose the operation sequence and credential location from that metadata; do not assume Bearer tokens or fixed operation names.
+4. Run each auth step as a separate `request` command. Build each payload from its inspected request schema. Use `--force-request` to regenerate the template from the cached schema, or `--force` when you also intend to refresh the operation schema. Prefer `--update-request-encoded` when shell quoting is fragile.
+5. Inspect each response before continuing. Retrieve a token or credential only from the response path identified by the schema. If the API rejects an optional empty string, omit it using the schema-aware guidance above rather than changing unrelated fields.
+6. Persist the exact live auth header object with `openapi-skills set-env --api <apiName> --auth-encoded <base64urlJson>`. Follow Rule 0 for encoding; do not combine a new credential with stale auth fields. Verify the stored auth with `openapi-skills get-env --api <apiName> --auth`.
+7. Make one authenticated smoke request using a schema-confirmed, safe read-only operation. Do not expose credentials in the final response or commit them.
 
 ### Prepare a Multi-Step Flow
 
@@ -201,4 +215,4 @@ All commands use Bash syntax: `openapi-skills <command> [options]`.
 
 ### Update Request Template
 
-Use `request --force` to reset the request artifact, `--update-request` to patch existing fields, `--update-request-encoded` with base64url-encoded JSON when the JSON may be mangled by a shell or agent, and `"__delete__"` to remove fields entirely. For auth headers, prefer a single pipeline or scripted flow that reads the live token, builds the exact header object, encodes it programmatically, persists it with `set-env --auth-encoded`, and verifies it with `get-env` before trusting the saved value. Inspect the artifact after each change.
+Use `request --force-request` to reset only the request artifact from the cached operation schema. Use `request --force` when both the operation schema and request artifact should be refreshed. Use `--update-request` to patch existing fields and `"__delete__"` to remove a specific field entirely. For a single-operation request, add `--omit-empty` to remove values that are exactly `""` when the schema says the field is optional; it runs after updates and persists the cleaned artifact. Required fields and `null`, `0`, `false`, empty arrays, and empty objects are preserved. If schema composition makes optionality unclear, the CLI leaves the value unchanged. Use `"__delete__"` for a targeted removal. When shell quoting is unreliable, use `--update-request-encoded` with the encoder exception described in Rule 0. Inspect the artifact after each change using the CLI. Multi-operation prepare-only requests do not support `--omit-empty`.

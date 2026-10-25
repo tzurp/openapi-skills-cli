@@ -8,6 +8,7 @@ export type Updates = Record<string, JSONValue>;
 export declare const DELETE_SENTINEL = "__delete__";
 export interface UpdateJsonFileOptions {
     deleteSentinel?: string;
+    transform?: (value: unknown) => void;
 }
 export declare function loadJsonObject(filePath: string): Promise<any>;
 export declare function updateJsonFile(filePath: string, updates: Updates, space?: number | string, options?: UpdateJsonFileOptions): Promise<{

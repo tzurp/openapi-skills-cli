@@ -56,6 +56,7 @@ Here’s a concise comparison to help you understand where each version shines:
 | **AI agent workflows** | ✔ Optional skill bundle for LLM agents | ✔ Enhanced Skills (OpenAPI annotation generation) |
 | **Mock server** | — | ✔ Local mock server from schema artifacts |
 | **HTML API documentation** | — | ✔ Generate interactive HTML docs |
+| **Compare API responses with response schemas** | — | ✔ Validate API responses against their OpenAPI response schemas |
 | **Schema diffing / version comparison** | — | ✔ Operation‑level diffing & breaking‑change detection |
 | **Code‑first OpenAPI generation** | — | ✔ Bootstrap OpenAPI from annotated source code |
 | **Distribution** | ``npm install -g`` | Native installers (Windows/macOS/Linux) |
@@ -71,10 +72,10 @@ Enable the optional Skill bundle, and AI agents (Copilot, Claude, Cursor, etc.) 
 - Explore operations by method, path, tag, or keyword  
 - Describe endpoints with full request/response details  
 - Prepare and execute live API requests (Postman‑like, no code needed)  
-- Parse OpenAPI 2.0/3.x and GraphQL schemas  
+- Parse OpenAPI 2.0/3.0.x and GraphQL schemas  
 - Generate artifacts (`endpoints.json`, `schemas/`)
 - Work with multiple API schemas simultaneously (stored under: .openapi-skills/<apiName>/ directory)
-- Validate schemas and API responses  
+- Validate schemas; validates API responses against response schemas  
 - Build multi-step scenarios  
 - AI Skills bundle for agent-driven workflows (code, tests, clients, docs)
 
@@ -123,8 +124,12 @@ openapi-skills describe addPet --api petstore
 ### Prepare and execute a request manually
 
 ```bash
-openapi-skills request addPet --api petstore --force --update-request '{"body.id":1,"body.name":"Fluffy"}'
+openapi-skills request addPet --api petstore --force --update-request '{"body.id":1,"body.name":""}' --omit-empty
 ```
+
+Use `--force-request` to reset only the request artifact from the cached operation schema. `--force` refreshes both the operation schema and the request artifact.
+
+`--omit-empty` removes empty-string values from optional fields using the operation schema; required fields and other values are preserved.
 
 ---
 

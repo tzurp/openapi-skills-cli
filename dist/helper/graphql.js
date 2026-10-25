@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
-import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, } from "graphql";
+import { buildSchema, isEnumType, isInputObjectType, isListType, isNonNullType, isObjectType, isScalarType, valueFromAST, } from "graphql";
 import { sanitizeOperationPath } from "./sanitizer.js";
 const scalarNames = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 export const typescriptInstallCommand = "npm install typescript";
@@ -747,8 +747,9 @@ function extractGraphQLEndpointsFromSDL(sourceText) {
             const args = {};
             for (const arg of field.args) {
                 const descriptor = describeInputType(arg.type);
-                if (arg.defaultValue !== undefined) {
-                    descriptor.defaultValue = arg.defaultValue;
+                const defaultValue = getGraphQLInputDefaultValue(arg);
+                if (defaultValue !== undefined) {
+                    descriptor.defaultValue = defaultValue;
                 }
                 args[arg.name] = descriptor;
             }
@@ -771,6 +772,13 @@ function extractGraphQLEndpointsFromSDL(sourceText) {
         }
     }
     return endpoints;
+}
+function getGraphQLInputDefaultValue(input) {
+    if (input.defaultValue !== undefined) {
+        return input.defaultValue;
+    }
+    const defaultNode = input.astNode?.defaultValue;
+    return defaultNode ? valueFromAST(defaultNode, input.type) : undefined;
 }
 function describeInputType(type, visited = new Set()) {
     if (isNonNullType(type)) {
@@ -803,8 +811,9 @@ function describeInputType(type, visited = new Set()) {
         const fields = {};
         for (const [fieldName, field] of Object.entries(type.getFields())) {
             const descriptor = describeInputType(field.type, nextVisited);
-            if (field.defaultValue !== undefined) {
-                descriptor.defaultValue = field.defaultValue;
+            const defaultValue = getGraphQLInputDefaultValue(field);
+            if (defaultValue !== undefined) {
+                descriptor.defaultValue = defaultValue;
             }
             fields[fieldName] = descriptor;
         }

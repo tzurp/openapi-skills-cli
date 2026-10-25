@@ -55,7 +55,7 @@ const banner = `
 ▀███▀ ██    ██▄▄▄ ██ ▀██ ██▀██ ██    ██     ▄▄██▀ ██ ██ ██ ██▄▄▄ ██▄▄▄ ▄▄██▀
 \u001b[0m
 `;
-program.option("--silent", "Suppress the banner in help output for agent-friendly usage.");
+program.option("--silent", "Hide the banner and Pro feature summary in help output for agent-friendly usage.");
 if (!silentFlagRequested) {
     program.addHelpText("before", banner);
 }
@@ -67,6 +67,29 @@ program.addHelpText("before", `
 const startYear = 2026;
 const currentYear = new Date().getFullYear();
 const yearRange = `${startYear}-${currentYear}`;
+if (!silentFlagRequested) {
+    program.addHelpText("after", `
+\u001b[35m
+-------------------------------------------------------------------------------
+openapi-skills Pro-only commands:
+  generate-openapi  Generate an OpenAPI document from source annotations.
+  docs              Generate and serve an HTML viewer for an OpenAPI schema.
+  compare           Compare APIs/operations or responses with response schemas.
+  mock-server       Start a local mock HTTP server.
+
+Pro-only options on shared commands:
+  install --skills-annotator
+  request --mock, --update-request-file <path>
+  request --patch-set <path=value>, --patch-set-num <path=value>,
+          --patch-set-bool <path=value>, --patch-append <path=value>,
+          --patch-append-num <path=value>, --patch-append-bool <path=value>,
+          --patch-delete <path>
+
+Learn more: https://github.com/tzurp/openapi-skills-pro
+-------------------------------------------------------------------------------
+\u001b[0m
+`);
+}
 program.addHelpText("after", `
 -------------------------------------------------------------------------------
 Copyright © ${yearRange} Tzur Paldi — Powered by Bedekbyte® All rights reserved
@@ -117,7 +140,7 @@ program
 });
 const generateCmd = program
     .command("generate [openapi-source]")
-    .description("Parse an OpenAPI or GraphQL source (file path or URL) and generate endpoints.json, schemas/, and config.json. Run this command first for a new spec. Supports: --validate, --base-url, --dereference, --no-progress.")
+    .description("Parse an OpenAPI 2.0, OpenAPI 3.0.x, or GraphQL source (file path or URL) and generate endpoints.json, schemas/, and config.json. OpenAPI 3.1.0 and later are not supported. Run this command first for a new spec. Supports: --validate, --base-url, --dereference, --no-progress.")
     .option("--validate <schema>", "Validate an OpenAPI or GraphQL schema (file path or URL) and exit")
     .option("--base-url <url>", "Base URL for the API")
     .option("--dereference", "Fully dereference the entire OpenAPI document before processing endpoints")
@@ -206,7 +229,7 @@ generateCmd.agentMeta = {
     name: "generate",
     category: "Generation",
     usage: "openapi-skills generate [openapi-source] [--validate <schema>] [--base-url <url>] [--dereference] [--no-progress] [--rename <newName>]",
-    description: "Parse a source file or URL and generate the API artifacts used by the rest of the CLI. Use --validate to check a schema and exit, --base-url to set the API base URL, --dereference when full dereferencing is appropriate, --rename to override the generated API name, and --no-progress to suppress progress output.",
+    description: "Parse an OpenAPI 2.0, OpenAPI 3.0.x, or GraphQL source file or URL and generate the API artifacts used by the rest of the CLI. OpenAPI 3.1.0 and later are not supported. Use --validate to check a schema and exit, --base-url to set the API base URL, --dereference when full dereferencing is appropriate, --rename to override the generated API name, and --no-progress to suppress progress output.",
     arguments: [
         { name: "openapi-source", type: "path|url", required: false, positional: true, description: "OpenAPI source file path or URL." },
         { name: "validate", type: "path|url", required: false, flag: true, description: "Validate an OpenAPI schema and exit." },
@@ -637,7 +660,7 @@ const getOperationCmd = program
             summary: `Artifact '${selection.artifactName}' is missing for this operation.`,
             message: `The '${selection.artifactName}' artifact does not exist yet.`,
             context: { api_name: apiName, operation_id: operationId, artifact_type: selection.artifactName },
-            nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+            nextCommand: `openapi-skills request ${operationId} --api ${apiName}`,
         }));
         process.exitCode = 1;
         return;
@@ -852,10 +875,12 @@ getOperationCmd.agentMeta = {
 };
 const requestCmd = program
     .command("request <operationId...>")
-    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (regenerate request artifact; use it when you want the original schema-shaped template), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --update-request-encoded (patch request artifact using base64url-encoded JSON), --header (add headers), --header-encoded (add headers using base64url-encoded JSON).")
+    .description("Make a live HTTP request for a specific operation, or prepare a multi-step request scenario without executing requests. Supports: --validate (validate only the response against the schema after the request is sent; it does not validate request bodies or guarantee a response exists), --force (refresh operation schema and regenerate request artifact), --force-request (regenerate only request artifact from the cached operation schema), --update-request (patch request artifact using flattened dot-notation keys; binary fields can be file paths or {kind:'file', path,...} descriptors), --update-request-encoded (patch request artifact using base64url-encoded JSON), --omit-empty (remove empty-string values from schema-optional request fields before sending), --header (add headers), --header-encoded (add headers using base64url-encoded JSON).")
     .requiredOption("--api <apiName>", "API name to use")
     .option("--validate", "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists.")
-    .option("--force", "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values.")
+    .option("--omit-empty", "For single-operation requests, remove empty-string values from schema-optional fields before sending and persist the cleaned artifact.")
+    .option("--force", "Refresh the operation schema and overwrite the request artifact with defaults.")
+    .option("--force-request", "Force overwrite only the request artifact with defaults from the cached operation schema; does not refresh the operation schema.")
     .option("--update-request <json>", [
     "Update request artifact before making the request using a single-quoted JSON string that represents a flattened object with dot-notation keys.",
     "Nested JSON objects are supported (they will be flattened and issue a warning), but the top-level value must be a JSON object. Invalid JSON will cause the command to fail.",
@@ -895,8 +920,18 @@ const requestCmd = program
         return;
     }
     if (operationIds.length > 1) {
+        if (options.omitEmpty) {
+            logger.result(buildError(ErrorCode.INVALID_REQUEST_UPDATE, {
+                summary: "--omit-empty requires a single operation request.",
+                message: "Multiple operationIds prepare a request scenario without sending requests, so there are no request values to omit.",
+                context: { api_name: apiName, operation_ids: operationIds },
+                nextCommand: `openapi-skills request <operationId> --api ${apiName} --omit-empty`,
+            }));
+            process.exitCode = 2;
+            return;
+        }
         try {
-            const { summaryText, payload } = await prepareMultiOperationRequests(apiName, operationIds, options.force === true);
+            const { summaryText, payload } = await prepareMultiOperationRequests(apiName, operationIds, options.force === true, options.forceRequest === true);
             logger.result(buildSuccess({
                 summary: summaryText,
                 operationIds,
@@ -966,7 +1001,7 @@ const requestCmd = program
         }
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const requestJsonPath = getOperationArtifactPath(apiName, sanitizedOperationId, "request");
-        if (options.force === true) {
+        if (options.force === true || options.forceRequest === true) {
             const config = await loadConfig();
             const configuredSchemaType = config.apis?.[apiName]?.schemaType;
             let isGraphQLSchema = configuredSchemaType === "graphql";
@@ -982,14 +1017,14 @@ const requestCmd = program
             if (!isGraphQLSchema) {
                 await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
             }
-            await prepareRequestTemplate(apiName, sanitizedOperationId, true);
+            await prepareRequestTemplate(apiName, sanitizedOperationId, options.force === true, options.forceRequest === true);
         }
         else if (!(await fs.pathExists(requestJsonPath))) {
             logger.result(buildError(ErrorCode.REQUEST_TEMPLATE_STALE, {
                 summary: "request.json does not exist for this operation.",
-                message: "--update-request requires an existing request.json artifact. Use --force to regenerate the request template.",
+                message: "--update-request requires an existing request.json artifact. Use --force-request to regenerate it from the cached operation schema, or --force to refresh the schema too.",
                 context: { api_name: apiName, operation_id: operationId, artifact_type: "request" },
-                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force --update-request '{\"field.path\":\"value\"}'`,
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force-request --update-request '{\"field.path\":\"value\"}'`,
             }));
             process.exitCode = 2;
             return;
@@ -1003,12 +1038,12 @@ const requestCmd = program
                 summary: "--update-request contains keys not present in request.json.",
                 message: `The following keys are missing from request.json: ${missingKeys.join(", ")}.`,
                 context: { api_name: apiName, operation_id: operationId, update_request: options.updateRequest, missing_keys: missingKeys },
-                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} ${options.force ? "--force" : "--force-request"}`,
             }));
             process.exitCode = 2;
             return;
         }
-        if (options.force === true) {
+        if (options.force === true || options.forceRequest === true) {
             const typeWarnings = collectRequestUpdateTypeWarnings(requestJson, updates);
             if (typeWarnings.length > 0) {
                 requestJsonWarnings = typeWarnings;
@@ -1044,7 +1079,7 @@ const requestCmd = program
         }
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const requestJsonPath = getOperationArtifactPath(apiName, sanitizedOperationId, "request");
-        if (options.force === true) {
+        if (options.force === true || options.forceRequest === true) {
             const config = await loadConfig();
             const configuredSchemaType = config.apis?.[apiName]?.schemaType;
             let isGraphQLSchema = configuredSchemaType === "graphql";
@@ -1060,14 +1095,14 @@ const requestCmd = program
             if (!isGraphQLSchema) {
                 await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
             }
-            await prepareRequestTemplate(apiName, sanitizedOperationId, true);
+            await prepareRequestTemplate(apiName, sanitizedOperationId, options.force === true, options.forceRequest === true);
         }
         else if (!(await fs.pathExists(requestJsonPath))) {
             logger.result(buildError(ErrorCode.REQUEST_TEMPLATE_STALE, {
                 summary: "request.json does not exist for this operation.",
-                message: "--update-request-encoded requires an existing request.json artifact. Use --force to regenerate the request template.",
+                message: "--update-request-encoded requires an existing request.json artifact. Use --force-request to regenerate it from the cached operation schema, or --force to refresh the schema too.",
                 context: { api_name: apiName, operation_id: operationId, artifact_type: "request" },
-                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force-request --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9`,
             }));
             process.exitCode = 2;
             return;
@@ -1081,12 +1116,12 @@ const requestCmd = program
                 summary: "--update-request-encoded contains keys not present in request.json.",
                 message: `The following keys are missing from request.json: ${missingKeys.join(", ")}.`,
                 context: { api_name: apiName, operation_id: operationId, update_request_encoded: options.updateRequestEncoded, missing_keys: missingKeys },
-                nextCommand: `openapi-skills request ${operationId} --api ${apiName} --force`,
+                nextCommand: `openapi-skills request ${operationId} --api ${apiName} ${options.force ? "--force" : "--force-request"}`,
             }));
             process.exitCode = 2;
             return;
         }
-        if (options.force === true) {
+        if (options.force === true || options.forceRequest === true) {
             const typeWarnings = collectRequestUpdateTypeWarnings(requestJson, updates);
             if (typeWarnings.length > 0) {
                 requestJsonWarnings = typeWarnings;
@@ -1142,7 +1177,7 @@ const requestCmd = program
     }
     if (options.validate) {
         try {
-            const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+            const result = await validateResponse(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings, options.omitEmpty, options.forceRequest);
             const metadata = getRequestResponseMetadata(apiName, operationId);
             if (!result.valid) {
                 logger.result(buildError(ErrorCode.VALIDATION_FAILED, {
@@ -1184,7 +1219,7 @@ const requestCmd = program
     }
     else {
         try {
-            const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+            const { request, response, warnings } = await makeRequest(apiName, operationId, options.force, cliHeaders, requestJsonUpdates, requestJsonWarnings, options.omitEmpty, options.forceRequest);
             await ensureResponseSchema(apiName, operationId);
             const metadata = getRequestResponseMetadata(apiName, operationId);
             logger.result(buildSuccess({
@@ -1211,20 +1246,23 @@ const requestCmd = program
 requestCmd.agentMeta = {
     name: "request",
     category: "Validation",
-    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--update-request <json>] [--update-request-encoded <base64url>] [--header <json>] [--header-encoded <base64url>]",
+    usage: "openapi-skills request <operationId...> --api <apiName> [--validate] [--force] [--force-request] [--update-request <json>] [--update-request-encoded <base64url>] [--omit-empty] [--header <json>] [--header-encoded <base64url>]",
     description: [
         "Make a live HTTP request for an operation, or prepare a multi-step request scenario without executing requests.",
         "When multiple operationIds are supplied, the command enters prepare-only mode and refreshes request artifact templates for the scenario.",
         "With --validate, validate only the response against the schema after the request is sent.",
-        "With --force, regenerate the request artifact from schema defaults.",
-        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. With --update-request-encoded, pass base64url-encoded JSON instead. With --header, merge JSON headers into the request. With --header-encoded, pass base64url-encoded JSON headers instead. Binary fields can be set to a file path string or a file descriptor object. Set a field to \"__delete__\" to remove it."
+        "With --force, refresh the operation schema and regenerate the request artifact from defaults.",
+        "With --force-request, regenerate only the request artifact from the cached operation schema without refreshing the schema.",
+        "With --update-request, patch the request artifact using flattened dot-notation keys. Nested JSON objects are accepted, but the provided value must be valid JSON. With --update-request-encoded, pass base64url-encoded JSON instead. With --omit-empty on a single-operation request, remove empty-string values from schema-optional fields after updates and persist the cleaned artifact; this option is not available in multi-operation prepare-only mode. With --header, merge JSON headers into the request. With --header-encoded, pass base64url-encoded JSON headers instead. Binary fields can be set to a file path string or a file descriptor object. Set a field to \"__delete__\" to remove it."
     ].join(" "),
     arguments: [
         { name: "operationId", type: "string[]", required: true, positional: true, description: "One or more operationIds to invoke. Multiple values switch the command into prepare-only mode for a multi-step scenario." },
         { name: "api", type: "string", required: true, flag: true, description: "The API name as defined in .openapi-skills/config.json." },
         { name: "validate", type: "flag", required: false, flag: true, description: "Validate only the response against the schema after the request is sent. Does not validate the request body or guarantee a response exists." },
-        { name: "force", type: "flag", required: false, flag: true, description: "Force overwrite request artifact with default values. Use this when you want the original schema-shaped template; omit it if you want to keep previous request values." },
-        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Binary fields can be set to a file path string or file descriptor object. Set a field to \"__delete__\" to remove it. Use with --force to rebuild defaults first." },
+        { name: "force", type: "flag", required: false, flag: true, description: "Refresh the operation schema and overwrite the request artifact with defaults." },
+        { name: "force-request", type: "flag", required: false, flag: true, description: "Force overwrite only the request artifact with defaults from the cached operation schema; does not refresh the operation schema. If used with --force, --force behavior applies." },
+        { name: "omit-empty", type: "flag", required: false, flag: true, description: "For single-operation requests, remove empty-string values from schema-optional fields after updates and persist the cleaned request artifact." },
+        { name: "update-request", type: "json", required: false, flag: true, description: "Patch request artifact before making the request. Only flattened object dot-notation keys are allowed. Binary fields can be set to a file path string or file descriptor object. Set a field to \"__delete__\" to remove it. Use with --force-request to rebuild defaults from the cached schema, or --force to refresh the schema too." },
         { name: "update-request-encoded", type: "string", required: false, flag: true, description: "Patch request artifact before making the request using base64url-encoded JSON. Use this when quoting is unreliable." },
         { name: "header", type: "json", required: false, flag: true, description: "Additional headers as a JSON string." },
         { name: "header-encoded", type: "string", required: false, flag: true, description: "Additional headers as base64url-encoded JSON. Use this when quoting is unreliable." }
@@ -1232,7 +1270,9 @@ requestCmd.agentMeta = {
     examples: [
         "openapi-skills request getPetById --api petstore",
         "openapi-skills request getPetById --api petstore --validate",
-        "openapi-skills request getPetById --api petstore --force --update-request '{\"user.profile.name\":\"Ada\"}'",
+        "openapi-skills request createPet --api petstore --omit-empty",
+        "openapi-skills request getPetById --api petstore --force-request --update-request '{\"user.profile.name\":\"Ada\"}'",
+        "openapi-skills request getPetById --api petstore --force-request",
         "openapi-skills request getPetById --api petstore --force --update-request-encoded eyJyZXF1ZXN0Qm9keS5pZCI6MTJ9",
         "openapi-skills request getPetById --api petstore --update-request '{\"user.profile.name\":\"Ada\"}'",
         "openapi-skills request getPetById --api petstore --update-request '{\"parameters.0.id\":1}'",

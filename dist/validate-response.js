@@ -13,6 +13,7 @@ import { buildGraphQLArtifact, findGraphQLEndpoint } from "./helper/graphql.js";
 import { getEndpointsPath } from "./helper/paths.js";
 import { ensureEndpointSchemaFile } from "./parser.js";
 import { fileURLToPath } from "url";
+import { omitGraphQLEmptyOptionalFields, omitOpenApiEmptyOptionalFields } from "./helper/request-omit-empty.js";
 function flattenToDotNotation(value, prefix = "", out = {}) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return out;
@@ -455,7 +456,7 @@ export async function ensureResponseSchema(apiName, operationId) {
     }
     return responseSchema;
 }
-export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
+export async function makeRequest(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings, omitEmpty = false, forceRequest = false) {
     const clientSchema = await buildClientCodeSchema(apiName, operationId, await getSanitizedOperationId(apiName, operationId), force);
     const config = await loadConfig();
     const baseUrl = config.apis?.[apiName]?.baseUrl;
@@ -464,21 +465,24 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
     if (clientSchema.schemaType === "graphql") {
         const sanitizedOperationId = await getSanitizedOperationId(apiName, operationId);
         const gqlOperationSchema = await ensureGraphQLOperationSchema(apiName, operationId, force);
-        const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateGraphQLRequestJson(apiName, sanitizedOperationId, force, gqlOperationSchema);
+        const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateGraphQLRequestJson(apiName, sanitizedOperationId, force || forceRequest, gqlOperationSchema);
         const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
         let requestJson = initialRequestJson;
         const warnings = [];
         if (requestJsonWarnings && requestJsonWarnings.length > 0) {
             warnings.push(...requestJsonWarnings);
         }
-        if (requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) {
-            const flattened = flattenToDotNotation(requestJsonUpdates);
+        if ((requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) || omitEmpty) {
+            const flattened = requestJsonUpdates ? flattenToDotNotation(requestJsonUpdates) : {};
             const mergedUpdates = { ...flattened };
-            for (const [k, v] of Object.entries(requestJsonUpdates)) {
+            for (const [k, v] of Object.entries(requestJsonUpdates ?? {})) {
                 if (!(k in mergedUpdates))
                     mergedUpdates[k] = v;
             }
-            await updateJsonFile(requestJsonPath, mergedUpdates, 2, { deleteSentinel: DELETE_SENTINEL });
+            await updateJsonFile(requestJsonPath, mergedUpdates, 2, {
+                deleteSentinel: DELETE_SENTINEL,
+                transform: omitEmpty ? value => omitGraphQLEmptyOptionalFields(value, gqlOperationSchema) : undefined,
+            });
             requestJson = await fs.readJson(requestJsonPath);
         }
         const requestVariables = {
@@ -529,25 +533,28 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
         throw new Error(`Invalid REST endpoint metadata for '${operationId}'.`);
     }
     const endpointSchema = await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId, force);
-    const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force);
+    const { requestJson: initialRequestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force || forceRequest);
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     let requestJson = initialRequestJson;
     const warnings = [];
     if (requestJsonWarnings && requestJsonWarnings.length > 0) {
         warnings.push(...requestJsonWarnings);
     }
-    if (requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) {
-        const updateWarning = buildUpdateRequestWarning(requestJsonUpdates);
+    if ((requestJsonUpdates && typeof requestJsonUpdates === "object" && Object.keys(requestJsonUpdates).length > 0) || omitEmpty) {
+        const updateWarning = requestJsonUpdates ? buildUpdateRequestWarning(requestJsonUpdates) : undefined;
         if (updateWarning) {
             warnings.push(updateWarning);
         }
-        const flattened = flattenToDotNotation(requestJsonUpdates);
+        const flattened = requestJsonUpdates ? flattenToDotNotation(requestJsonUpdates) : {};
         const mergedUpdates = { ...flattened };
-        for (const [k, v] of Object.entries(requestJsonUpdates)) {
+        for (const [k, v] of Object.entries(requestJsonUpdates ?? {})) {
             if (!(k in mergedUpdates))
                 mergedUpdates[k] = v;
         }
-        await updateJsonFile(requestJsonPath, mergedUpdates, 2, { deleteSentinel: DELETE_SENTINEL });
+        await updateJsonFile(requestJsonPath, mergedUpdates, 2, {
+            deleteSentinel: DELETE_SENTINEL,
+            transform: omitEmpty ? value => omitOpenApiEmptyOptionalFields(value, endpointSchema) : undefined,
+        });
         requestJson = await fs.readJson(requestJsonPath);
     }
     const requestContext = buildRequestContext(apiName, restSchema, requestJson, config, responseJsonPath, cliHeaders, warnings);
@@ -628,8 +635,8 @@ export async function makeRequest(apiName, operationId, force = false, cliHeader
     const responseJson = await fs.readJson(requestContext.responseJsonPath);
     return { request: requestJson, response: responseJson, warnings: requestContext.warnings };
 }
-export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings) {
-    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings);
+export async function validateResponse(apiName, operationId, force = false, cliHeaders, requestJsonUpdates, requestJsonWarnings, omitEmpty = false, forceRequest = false) {
+    const { request, response, warnings } = await makeRequest(apiName, operationId, force, cliHeaders, requestJsonUpdates, requestJsonWarnings, omitEmpty, forceRequest);
     const safeWarnings = warnings ?? [];
     if (await getOperationSchemaType(apiName) === "graphql") {
         if (!response || typeof response !== "object") {
@@ -669,7 +676,7 @@ export async function validateResponse(apiName, operationId, force = false, cliH
         return { valid: false, errors, warnings: safeWarnings };
     }
 }
-export async function prepareRequestTemplate(apiName, sanitizedOperationId, force = false) {
+export async function prepareRequestTemplate(apiName, sanitizedOperationId, force = false, forceRequest = false) {
     if (await getOperationSchemaType(apiName) === "graphql") {
         const operationSchema = await ensureGraphQLOperationSchema(apiName, sanitizedOperationId, force);
         const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
@@ -683,7 +690,7 @@ export async function prepareRequestTemplate(apiName, sanitizedOperationId, forc
             requestJson,
         };
     }
-    const { requestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force);
+    const { requestJson, responseJsonPath } = await getOrCreateRequestJson(apiName, sanitizedOperationId, force || forceRequest);
     const requestJsonPath = path.join(getSchemasDir(apiName), sanitizedOperationId, "request.json");
     return {
         requestJsonPath,

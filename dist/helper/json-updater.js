@@ -135,6 +135,7 @@ export async function updateJsonFile(filePath, updates, space = 2, options = {})
         }
         setDeep(after, k, v);
     }
+    options.transform?.(after);
     const changed = JSON.stringify(before) !== JSON.stringify(after);
     if (!changed)
         return { changed: false, before, after };

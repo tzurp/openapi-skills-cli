@@ -39,12 +39,12 @@ export async function resolveMultiOperationIds(apiName, operationIds) {
     }
     return resolved;
 }
-export async function prepareMultiOperationRequests(apiName, operationIds, force = false) {
+export async function prepareMultiOperationRequests(apiName, operationIds, force = false, forceRequest = false) {
     const resolvedOperationIds = await resolveMultiOperationIds(apiName, operationIds);
     const operations = [];
     for (const { operationId, sanitizedOperationId } of resolvedOperationIds) {
         await ensureEndpointSchemaFile(apiName, operationId, sanitizedOperationId);
-        await prepareRequestTemplate(apiName, sanitizedOperationId, force);
+        await prepareRequestTemplate(apiName, sanitizedOperationId, force, forceRequest);
         const metadata = getRequestResponseMetadata(apiName, sanitizedOperationId);
         operations.push({
             kind: "request-result",
@@ -64,7 +64,7 @@ export async function prepareMultiOperationRequests(apiName, operationIds, force
         ...operations.map(operation => `  ✓ ${operation.operationId}`),
         "",
         "No live requests were executed.",
-        "Use `openapi-skills request <operationId> --force --update-request ...` with only flattened object dot-notation keys to run each step.",
+        "Use `openapi-skills request <operationId> --force-request --update-request ...` with only flattened object dot-notation keys to reset the request template from the cached schema and run each step.",
     ];
     const payload = {
         kind: "request-result",
@@ -73,7 +73,7 @@ export async function prepareMultiOperationRequests(apiName, operationIds, force
         operationIds,
         summary: summaryLines,
         message: "No live requests were executed.",
-        hint: "Use `openapi-skills request <operationId> --force --update-request ...` with only flattened object dot-notation keys to run each step.",
+        hint: "Use `openapi-skills request <operationId> --force-request --update-request ...` with only flattened object dot-notation keys to reset the request template from the cached schema and run each step.",
         operations,
     };
     return {
