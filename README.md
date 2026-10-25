@@ -6,6 +6,15 @@ Looking for the Pro version? → https://github.com/tzurp/openapi-skills-pro
 
 `openapi-skills` is an OpenAPI CLI and GraphQL CLI for exploring APIs, generating artifacts, validating schemas, and preparing live API requests. Its optional AI agent skills enable Copilot, Claude, Cursor, and other agents to use the CLI through natural language.
 
+<p align="center">
+  <a href="https://github.com/tzurp/openapi-skills-cli">
+    <img 
+      src="https://img.shields.io/badge/⭐%20STAR%20THIS%20PROJECT%20⭐-black?style=for-the-badge&logo=github&logoColor=white" 
+      height="90"
+    />
+  </a>
+</p>
+
 ![Legacy downloads](https://img.shields.io/badge/Legacy%20downloads-5347-blue)
 ![openapi-skills downloads](https://img.shields.io/badge/dynamic/json?url=https://api.npmjs.org/downloads/point/2020-01-01:2030-01-01/@tzurp/openapi-skills&query=$.downloads&label=Current%20downloads&color=blue)
 <p align="center">
